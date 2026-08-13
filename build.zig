@@ -23,8 +23,16 @@ pub fn build(b: *std.Build) void {
     const raylib = raylib_dep.module("raylib");
     const raylib_artifact = raylib_dep.artifact("raylib");
 
+    const onnx = b.addTranslateC(.{
+        .root_source_file = b.path("src/ffi/onnx.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    onnx.linkSystemLibrary("onnxruntime", .{});
+
     exe.root_module.linkLibrary(raylib_artifact);
     exe.root_module.addImport("raylib", raylib);
+    exe.root_module.addImport("onnx", onnx.createModule());
 
     b.installArtifact(exe);
 }
