@@ -30,9 +30,16 @@ pub fn build(b: *std.Build) void {
     });
     onnx.linkSystemLibrary("onnxruntime", .{});
 
+    const vl = b.addTranslateC(.{
+        .root_source_file = b.path("src/ffi/vl.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     exe.root_module.linkLibrary(raylib_artifact);
     exe.root_module.addImport("raylib", raylib);
     exe.root_module.addImport("onnx", onnx.createModule());
+    exe.root_module.addImport("vl", vl.createModule());
 
     b.installArtifact(exe);
 }
