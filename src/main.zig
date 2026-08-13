@@ -24,6 +24,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
 
+    _ = io;
     _ = arena;
 
     const fd = try std.posix.openat(
@@ -48,6 +49,8 @@ pub fn main(init: std.process.Init) !void {
     parm.parm.capture.timeperframe.numerator = 1;
     parm.parm.capture.timeperframe.denominator = 10;
     try ioctl(fd, vl.VIDIOC_S_PARM, @intFromPtr(&parm));
+    // NOTE: driver picks whatever format is available regardless of what we set.
+    std.debug.print("driver fps = {d}\n", .{parm.parm.capture.timeperframe.denominator});
 
     var req = vl.v4l2_requestbuffers{};
     req.count = NUM_BUFFERS;
@@ -97,9 +100,6 @@ pub fn main(init: std.process.Init) !void {
         .revents = 0,
     }};
 
-    var timestamp = std.Io.Clock.real.now(io);
-    var frame_count: usize = 0;
-
     while (true) {
         _ = try std.posix.poll(&pfds, TIMEOUT);
 
@@ -108,18 +108,6 @@ pub fn main(init: std.process.Init) !void {
             buf.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
             buf.memory = vl.V4L2_MEMORY_MMAP;
             try ioctl(fd, vl.VIDIOC_DQBUF, @intFromPtr(&buf));
-
-            frame_count += 1;
-
-            if (frame_count >= 15) {
-                const new_timestamp = std.Io.Clock.real.now(io);
-                const difference = new_timestamp.nanoseconds - timestamp.nanoseconds;
-                const fps = (@as(f64, @floatFromInt(frame_count)) / @as(f64, @floatFromInt(difference))) * std.time.ns_per_s;
-                timestamp = new_timestamp;
-                frame_count = 0;
-
-                std.debug.print("fps = {d:.2}\n", .{fps});
-            }
 
             try ioctl(fd, vl.VIDIOC_QBUF, @intFromPtr(&buf));
         }
