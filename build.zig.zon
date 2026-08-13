@@ -1,0 +1,7 @@
+.{
+    .name = .vision_zig,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.16.0",
+    .paths = .{""},
+    .fingerprint = 0xa6ad97d72dd20525,
+}
