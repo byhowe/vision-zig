@@ -183,6 +183,8 @@ pub fn main(init: std.process.Init) !void {
     // track the actual frame time
     var last_frame_timestmap = std.Io.Clock.awake.now(io).nanoseconds;
 
+    var top: Prediction = .{};
+
     while (!rl.windowShouldClose()) {
         _ = try std.posix.poll(&pfds, 0);
 
@@ -243,7 +245,9 @@ pub fn main(init: std.process.Init) !void {
             var out_ptr: [*c]f32 = null;
             try checkStatus(api, api.*.GetTensorMutableData.?(output_tensor, @ptrCast(&out_ptr)));
 
-            std.debug.print("FPS: {d:.2} | YOLO inference success. Output[0] = {d:.4}\n", .{fps_estimated, out_ptr[0]});
+            top = getTopPrediction(out_ptr, 8400);
+
+            std.debug.print("fps = {d:.2} | {s}\n", .{ fps_estimated, model_labels[top.class_id] });
         }
 
         rl.beginDrawing();
@@ -254,6 +258,56 @@ pub fn main(init: std.process.Init) !void {
 
         rl.endDrawing();
     }
+}
+
+const Prediction = struct {
+    class_id: usize = 0,
+    score: f32 = 0.0,
+
+    cx: f32 = 0.0,
+    cy: f32 = 0.0,
+    w: f32 = 0.0,
+    h: f32 = 0.0,
+};
+
+fn getTopPrediction(out_ptr: [*c]f32, num_anchors: usize) Prediction {
+    var max_score: f32 = 0.0;
+    var best_class: usize = 0;
+    var best_anchor: usize = 0;
+
+    // NOTE: 0..3 are box coords. 4..83 are classes..
+
+    // find the anchor index with the highest score
+    for (4..84) |label_idx| {
+        for (0..num_anchors) |anchor_idx| {
+            // the layout of the tensor is weird. we have a 80 contigous blocks of size 8400.
+            // | 8400 | 8400 | ... 80 times ... | 8400 |
+            const flat_idx = (label_idx * num_anchors) + anchor_idx;
+            const score = out_ptr[flat_idx];
+
+            if (score > max_score) {
+                max_score = score;
+                best_class = label_idx - 4;
+                best_anchor = anchor_idx;
+            }
+        }
+    }
+
+    // extract the bounding box for the anchor with the highest scored label
+    // [cx, cy, w, h]
+    const cx_raw = out_ptr[(0 * num_anchors) + best_anchor];
+    const cy_raw = out_ptr[(1 * num_anchors) + best_anchor];
+    const w_raw = out_ptr[(2 * num_anchors) + best_anchor];
+    const h_raw = out_ptr[(3 * num_anchors) + best_anchor];
+
+    return .{
+        .class_id = best_class,
+        .score = max_score,
+        .cx = cx_raw,
+        .cy = cy_raw,
+        .w = w_raw,
+        .h = h_raw,
+    };
 }
 
 // Convert an RGB frame into CHW f32 normalized array with top-left letterboxing
