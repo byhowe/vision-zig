@@ -52,6 +52,10 @@ pub fn main(init: std.process.Init) !void {
 
     // RAYLIB
 
+    // suppress unnecessary information
+    rl.setTraceLogLevel(.warning);
+    std.debug.print("raylib version = {s}\n", .{rl.RAYLIB_VERSION});
+
     rl.initWindow(WIDTH, HEIGHT, "YOLO");
     rl.setTargetFPS(30);
     defer rl.closeWindow();
