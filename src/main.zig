@@ -69,7 +69,11 @@ pub fn main(init: std.process.Init) !void {
     // setup memory and buffers
 
     var memory_info: ?*ort.OrtMemoryInfo = null;
-    try checkStatus(api, api.*.CreateCpuMemoryInfo.?(ort.OrtArenaAllocator, ort.OrtMemTypeDefault, &memory_info));
+    try checkStatus(api, api.*.CreateCpuMemoryInfo.?(
+        ort.OrtArenaAllocator,
+        ort.OrtMemTypeDefault,
+        &memory_info,
+    ));
     defer api.*.ReleaseMemoryInfo.?(memory_info);
 
     // arena allocate buffer for the input tensor. we already know the size from the previous debug prints.
@@ -143,7 +147,14 @@ pub fn main(init: std.process.Init) !void {
 
             try video.queueBuffer(idx);
 
-            preprocessYolo(texture_data[0..texture_size], input_tensor_data, WIDTH, HEIGHT, YOLO_WIDTH, YOLO_HEIGHT);
+            preprocessYolo(
+                texture_data[0..texture_size],
+                input_tensor_data,
+                WIDTH,
+                HEIGHT,
+                YOLO_WIDTH,
+                YOLO_HEIGHT,
+            );
 
             // FIXME: the documentation says we need to free these with the allocator. how do we do that?
             var input_name: ?[*]u8 = null;
@@ -215,10 +226,23 @@ pub fn main(init: std.process.Init) !void {
             // draw background for the text
             const text_size = 20;
             const text_width = rl.measureText(label_text, text_size);
-            rl.drawRectangle(@intFromFloat(box_x), @as(i32, @intFromFloat(box_y)) - text_size, text_width + 10, text_size, rl.Color.lime);
+
+            rl.drawRectangle(
+                @intFromFloat(box_x),
+                @as(i32, @intFromFloat(box_y)) - text_size,
+                text_width + 10,
+                text_size,
+                rl.Color.lime,
+            );
 
             // draw label
-            rl.drawText(label_text, @intFromFloat(box_x + 5), @as(i32, @intFromFloat(box_y)) - text_size, text_size, rl.Color.black);
+            rl.drawText(
+                label_text,
+                @intFromFloat(box_x + 5),
+                @as(i32, @intFromFloat(box_y)) - text_size,
+                text_size,
+                rl.Color.black,
+            );
         }
 
         rl.endDrawing();
