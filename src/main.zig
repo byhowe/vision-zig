@@ -72,8 +72,16 @@ pub fn main(init: std.process.Init) !void {
     var allocator: ?*ort.OrtAllocator = null;
     try checkStatus(api, api.*.GetAllocatorWithDefaultOptions.?(&allocator));
 
+    // setup memory and buffers
 
+    var memory_info: ?*ort.OrtMemoryInfo = null;
+    try checkStatus(api, api.*.CreateCpuMemoryInfo.?(ort.OrtArenaAllocator, ort.OrtMemTypeDefault, &memory_info));
+    defer api.*.ReleaseMemoryInfo.?(memory_info);
 
+    // arena allocate buffer for the input tensor. we already know the size from the previous debug prints.
+    const input_tensor_len = 1 * 3 * YOLO_HEIGHT * YOLO_WIDTH;
+    const input_tensor_data = try arena.alloc(f32, input_tensor_len);
+    var input_shape = [_]i64{ 1, 3, YOLO_HEIGHT, YOLO_WIDTH };
 
     // RAYLIB
 
@@ -191,12 +199,51 @@ pub fn main(init: std.process.Init) !void {
             // NOTE: Interesting. the fps is much more erradic when the webcam privacy is on.
             // It fluctuates between 15 fps and 30 fps.
             const fps_estimated = @as(f32, @floatFromInt(std.time.ns_per_s)) / @as(f32, @floatFromInt(time_elapsed));
-            std.debug.print("fps = {d:.2}\n", .{fps_estimated});
 
             try yuyvToRgb(buffers[buf.index].start, @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
             rl.updateTexture(texture, @ptrCast(texture_data.ptr));
 
             try ioctl(fd, vl.VIDIOC_QBUF, @intFromPtr(&buf));
+
+            preprocessYolo(texture_data[0..texture_size], input_tensor_data, WIDTH, HEIGHT, YOLO_WIDTH, YOLO_HEIGHT);
+
+            // FIXME: the documentation says we need to free these with the allocator. how do we do that?
+            var input_name: ?[*]u8 = null;
+            try checkStatus(api, api.*.SessionGetInputName.?(session, 0, allocator, &input_name));
+
+            var output_name: ?[*]u8 = null;
+            try checkStatus(api, api.*.SessionGetOutputName.?(session, 0, allocator, &output_name));
+
+            // TODO: do we need to create this tensor every time? can we do it once outside the loop and fill the data every frame? experiment...
+            var input_tensor: ?*ort.OrtValue = null;
+            try checkStatus(api, api.*.CreateTensorWithDataAsOrtValue.?(
+                memory_info,
+                @ptrCast(input_tensor_data.ptr),
+                input_tensor_data.len * @sizeOf(f32),
+                @ptrCast(&input_shape[0]),
+                input_shape.len,
+                ort.ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                &input_tensor,
+            ));
+            defer api.*.ReleaseValue.?(input_tensor);
+
+            var output_tensor: ?*ort.OrtValue = null;
+            try checkStatus(api, api.*.Run.?(
+                session,
+                null, // run_options
+                &input_name,
+                &input_tensor,
+                1,
+                &output_name,
+                1,
+                &output_tensor,
+            ));
+            defer api.*.ReleaseValue.?(output_tensor);
+
+            var out_ptr: [*c]f32 = null;
+            try checkStatus(api, api.*.GetTensorMutableData.?(output_tensor, @ptrCast(&out_ptr)));
+
+            std.debug.print("FPS: {d:.2} | YOLO inference success. Output[0] = {d:.4}\n", .{fps_estimated, out_ptr[0]});
         }
 
         rl.beginDrawing();
