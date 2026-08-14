@@ -9,13 +9,6 @@ const HEIGHT = 480;
 const NUM_BUFFERS = 4;
 const TIMEOUT = 2000;
 
-fn ioctl(fd: std.os.linux.fd_t, request: u32, arg: usize) !void {
-    var r = std.os.linux.ioctl(fd, request, arg);
-    while (std.os.linux.errno(r) == .INTR) r = std.os.linux.ioctl(fd, request, arg);
-    const errno = std.os.linux.errno(r);
-    if (errno != .SUCCESS) return error.FailedIoctl;
-}
-
 const Buffer = struct {
     start: []align(std.heap.page_size_min) u8,
     length: usize,
@@ -206,4 +199,11 @@ fn yuyvToRgbPixel(yuyv: *const [4]u8, rgb: *[6]u8) void {
     rgb[3] = @intFromFloat(std.math.clamp(y1 + r_uv, 0.0, 255.0));
     rgb[4] = @intFromFloat(std.math.clamp(y1 + g_uv, 0.0, 255.0));
     rgb[5] = @intFromFloat(std.math.clamp(y1 + b_uv, 0.0, 255.0));
+}
+
+fn ioctl(fd: std.os.linux.fd_t, request: u32, arg: usize) !void {
+    var r = std.os.linux.ioctl(fd, request, arg);
+    while (std.os.linux.errno(r) == .INTR) r = std.os.linux.ioctl(fd, request, arg);
+    const errno = std.os.linux.errno(r);
+    if (errno != .SUCCESS) return error.FailedIoctl;
 }
