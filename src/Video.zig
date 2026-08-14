@@ -100,9 +100,16 @@ pub fn streamon(self: *Self) !void {
     try ioctl(self.fd, vl.VIDIOC_STREAMON, @intFromPtr(&ty));
 }
 
-fn ioctl(fd: std.os.linux.fd_t, request: u32, arg: usize) !void {
-    var r = std.os.linux.ioctl(fd, request, arg);
-    while (std.os.linux.errno(r) == .INTR) r = std.os.linux.ioctl(fd, request, arg);
-    const errno = std.os.linux.errno(r);
-    if (errno != .SUCCESS) return error.FailedIoctl;
+fn ioctl(fd: std.posix.fd_t, request: u32, arg: usize) !void {
+    while (true) {
+        const rc = std.os.linux.ioctl(fd, request, arg);
+        switch (std.os.linux.errno(rc)) {
+            .SUCCESS => return,
+            .INTR => continue,
+            else => |err| {
+                std.log.err("ioctl 0x{X} failed: {s}", .{ request, @tagName(err) });
+                return error.IoctlFailed;
+            },
+        }
+    }
 }
