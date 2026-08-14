@@ -322,15 +322,30 @@ fn preprocessYolo(rgb: []const u8, tensor: []f32, src_w: usize, src_h: usize, ds
     const max_y = @min(src_h, dst_h);
     const max_x = @min(src_w, dst_w);
 
-    for (0..max_y) |y| {
-        for (0..max_x) |x| {
-            const src_idx = (y * src_w + x) * 3;
-            const dst_idx = (y * dst_w) + x;
+    const r_offset = 0;
+    const g_offset = channel_stride;
+    const b_offset = channel_stride * 2;
 
-            tensor[0 * channel_stride + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 0])) / 255.0;
-            tensor[1 * channel_stride + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 1])) / 255.0;
-            tensor[2 * channel_stride + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 2])) / 255.0;
+    const scale: f32 = 1.0 / 255.0;
+
+    var src_row_start: usize = 0;
+    var dst_row_start: usize = 0;
+
+    for (0..max_y) |_| {
+        var src_idx = src_row_start;
+        var dst_idx = dst_row_start;
+
+        for (0..max_x) |_| {
+            tensor[r_offset + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 0])) * scale;
+            tensor[g_offset + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 1])) * scale;
+            tensor[b_offset + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 2])) * scale;
+
+            src_idx += 3;
+            dst_idx += 1;
         }
+
+        src_row_start += src_w * 3;
+        dst_row_start += dst_w;
     }
 }
 
