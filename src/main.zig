@@ -14,6 +14,9 @@ const NUM_BUFFERS = 4;
 const TIMEOUT = 2000;
 
 const model_data: []const u8 = @embedFile("yolov8m.onnx");
+// in 0: name='images', shape={ 1, 3, 640, 640 }
+// out 0: name='output0', shape={ 1, 84, 8400 }
+
 const model_labels = block: {
     @setEvalBranchQuota(100_000);
 
@@ -69,55 +72,8 @@ pub fn main(init: std.process.Init) !void {
     var allocator: ?*ort.OrtAllocator = null;
     try checkStatus(api, api.*.GetAllocatorWithDefaultOptions.?(&allocator));
 
-    // debug purposes
 
-    var num_input_nodes: usize = 0;
-    try checkStatus(api, api.*.SessionGetInputCount.?(session, &num_input_nodes));
-    std.debug.print("num inputs to the model = {d}\n", .{num_input_nodes});
 
-    var input_name_ptr: [*c]u8 = null;
-    for (0..num_input_nodes) |i| {
-        try checkStatus(api, api.*.SessionGetInputName.?(session, i, allocator, &input_name_ptr));
-
-        var type_info: ?*ort.OrtTypeInfo = null;
-        try checkStatus(api, api.*.SessionGetInputTypeInfo.?(session, i, &type_info));
-        defer api.*.ReleaseTypeInfo.?(type_info);
-
-        var tensor_info: ?*const ort.OrtTensorTypeAndShapeInfo = null;
-        try checkStatus(api, api.*.CastTypeInfoToTensorInfo.?(type_info, &tensor_info));
-
-        var num_dims: usize = 0;
-        try checkStatus(api, api.*.GetDimensionsCount.?(tensor_info, &num_dims));
-
-        const dims = try arena.alloc(i64, num_dims);
-        try checkStatus(api, api.*.GetDimensions.?(tensor_info, dims.ptr, num_dims));
-
-        std.debug.print("in {d}: name='{s}', shape={any}\n", .{ i, input_name_ptr, dims });
-    }
-
-    var num_output_nodes: usize = 0;
-    try checkStatus(api, api.*.SessionGetOutputCount.?(session, &num_output_nodes));
-    std.debug.print("num outputs of the model = {d}\n", .{num_output_nodes});
-
-    var output_name_ptr: [*c]u8 = null;
-    for (0..num_output_nodes) |i| {
-        try checkStatus(api, api.*.SessionGetOutputName.?(session, i, allocator, &output_name_ptr));
-
-        var type_info: ?*ort.OrtTypeInfo = null;
-        try checkStatus(api, api.*.SessionGetOutputTypeInfo.?(session, i, &type_info));
-        defer api.*.ReleaseTypeInfo.?(type_info);
-
-        var tensor_info: ?*const ort.OrtTensorTypeAndShapeInfo = null;
-        try checkStatus(api, api.*.CastTypeInfoToTensorInfo.?(type_info, &tensor_info));
-
-        var num_dims: usize = 0;
-        try checkStatus(api, api.*.GetDimensionsCount.?(tensor_info, &num_dims));
-
-        const dims = try arena.alloc(i64, num_dims);
-        try checkStatus(api, api.*.GetDimensions.?(tensor_info, dims.ptr, num_dims));
-
-        std.debug.print("out {d}: name='{s}', shape={any}\n", .{ i, output_name_ptr, dims });
-    }
 
     // RAYLIB
 
