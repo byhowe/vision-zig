@@ -100,6 +100,11 @@ pub fn streamon(self: *Self) !void {
     try ioctl(self.fd, vl.VIDIOC_STREAMON, @intFromPtr(&ty));
 }
 
+pub fn streamoff(self: *Self) !void {
+    const ty = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    try ioctl(self.fd, vl.VIDIOC_STREAMOFF, @intFromPtr(&ty));
+}
+
 fn ioctl(fd: std.posix.fd_t, request: u32, arg: usize) !void {
     while (true) {
         const rc = std.os.linux.ioctl(fd, request, arg);

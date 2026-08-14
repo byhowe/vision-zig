@@ -111,6 +111,7 @@ pub fn main(init: std.process.Init) !void {
     defer video.unmapBuffers() catch {};
     try video.queueBuffers();
     try video.streamon();
+    defer video.streamoff() catch {};
 
     var pfds = [_]std.posix.pollfd{.{
         .fd = video.fd,
