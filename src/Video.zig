@@ -86,13 +86,24 @@ pub fn unmapBuffers(self: *Self) !void {
 }
 
 pub fn queueBuffers(self: *Self) !void {
-    for (0..self.buffers.len) |i| {
-        var buffer = vl.v4l2_buffer{};
-        buffer.index = @intCast(i);
-        buffer.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buffer.memory = vl.V4L2_MEMORY_MMAP;
-        try ioctl(self.fd, vl.VIDIOC_QBUF, @intFromPtr(&buffer));
-    }
+    for (0..self.buffers.len) |i| try self.queueBuffer(i);
+}
+
+pub fn queueBuffer(self: *Self, idx: usize) !void {
+    var buffer = std.mem.zeroes(vl.v4l2_buffer);
+    buffer.index = @intCast(idx);
+    buffer.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    buffer.memory = vl.V4L2_MEMORY_MMAP;
+    try ioctl(self.fd, vl.VIDIOC_QBUF, @intFromPtr(&buffer));
+}
+
+pub fn dequeueBuffer(self: *Self) !usize {
+    var buf = std.mem.zeroes(vl.v4l2_buffer);
+    buf.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    buf.memory = vl.V4L2_MEMORY_MMAP;
+    try ioctl(self.fd, vl.VIDIOC_DQBUF, @intFromPtr(&buf));
+
+    return buf.index;
 }
 
 pub fn streamon(self: *Self) !void {

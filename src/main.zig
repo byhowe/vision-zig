@@ -128,10 +128,7 @@ pub fn main(init: std.process.Init) !void {
         _ = try std.posix.poll(&pfds, 0);
 
         if ((pfds[0].revents & std.posix.POLL.IN) != 0) {
-            var buf = vl.v4l2_buffer{};
-            buf.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            buf.memory = vl.V4L2_MEMORY_MMAP;
-            try ioctl(video.fd, vl.VIDIOC_DQBUF, @intFromPtr(&buf));
+            const idx = try video.dequeueBuffer();
 
             const new_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
             const time_elapsed = new_frame_timestamp - last_frame_timestmap;
@@ -141,10 +138,10 @@ pub fn main(init: std.process.Init) !void {
             // It fluctuates between 15 fps and 30 fps.
             const fps_estimated = @as(f32, @floatFromInt(std.time.ns_per_s)) / @as(f32, @floatFromInt(time_elapsed));
 
-            try yuyvToRgb(video.buffers[buf.index], @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
+            try yuyvToRgb(video.buffers[idx], @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
             rl.updateTexture(texture, @ptrCast(texture_data.ptr));
 
-            try ioctl(video.fd, vl.VIDIOC_QBUF, @intFromPtr(&buf));
+            try video.queueBuffer(idx);
 
             preprocessYolo(texture_data[0..texture_size], input_tensor_data, WIDTH, HEIGHT, YOLO_WIDTH, YOLO_HEIGHT);
 
