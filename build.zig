@@ -37,10 +37,22 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const stb = b.addTranslateC(.{
+        .root_source_file = b.path("src/ffi/stb_image.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const stb_mod = stb.createModule();
+    stb_mod.addCSourceFile(.{
+        .file = b.path("src/ffi/stb_image.c"),
+        .flags = &.{"-O3"},
+    });
+
     exe.root_module.linkLibrary(raylib_artifact);
     exe.root_module.addImport("raylib", raylib);
     exe.root_module.addImport("ort", ort.createModule());
     exe.root_module.addImport("vl", vl.createModule());
+    exe.root_module.addImport("stb", stb_mod);
 
     b.installArtifact(exe);
 }
