@@ -8,10 +8,7 @@ const Self = @This();
 fd: std.posix.fd_t,
 buffers: []Buffer = undefined,
 
-const Buffer = struct {
-    ptr: []align(std.heap.page_size_min) u8,
-    len: usize,
-};
+const Buffer = []align(std.heap.page_size_min) u8;
 
 pub fn init(path: []const u8) !Self {
     const fd = try std.posix.openat(
@@ -71,7 +68,7 @@ pub fn mapBuffers(self: *Self) !void {
         buffer.memory = vl.V4L2_MEMORY_MMAP;
         try ioctl(self.fd, vl.VIDIOC_QUERYBUF, @intFromPtr(&buffer));
 
-        const ptr = try std.posix.mmap(
+        const mem = try std.posix.mmap(
             null,
             buffer.length,
             .{ .READ = true, .WRITE = true },
@@ -80,13 +77,12 @@ pub fn mapBuffers(self: *Self) !void {
             buffer.m.offset,
         );
 
-        self.buffers[i].ptr = ptr;
-        self.buffers[i].len = buffer.length;
+        self.buffers[i] = mem;
     }
 }
 
 pub fn unmapBuffers(self: *Self) !void {
-    for (0..self.buffers.len) |i| std.posix.munmap(self.buffers[i].ptr);
+    for (0..self.buffers.len) |i| std.posix.munmap(self.buffers[i]);
 }
 
 pub fn queueBuffers(self: *Self) !void {

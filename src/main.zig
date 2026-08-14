@@ -140,7 +140,7 @@ pub fn main(init: std.process.Init) !void {
             // It fluctuates between 15 fps and 30 fps.
             const fps_estimated = @as(f32, @floatFromInt(std.time.ns_per_s)) / @as(f32, @floatFromInt(time_elapsed));
 
-            try yuyvToRgb(video.buffers[buf.index].ptr, @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
+            try yuyvToRgb(video.buffers[buf.index], @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
             rl.updateTexture(texture, @ptrCast(texture_data.ptr));
 
             try ioctl(video.fd, vl.VIDIOC_QBUF, @intFromPtr(&buf));
