@@ -59,6 +59,13 @@ pub fn main(init: std.process.Init) !void {
     // don't hammer all the cores.
     try checkStatus(api, api.*.SetIntraOpNumThreads.?(session_options, 4));
 
+    // enable cuda so we can still use the computer
+    var cuda_options: ?*ort.OrtCUDAProviderOptionsV2 = null;
+    try checkStatus(api, api.*.CreateCUDAProviderOptions.?(&cuda_options));
+    defer api.*.ReleaseCUDAProviderOptions.?(cuda_options);
+
+    try checkStatus(api, api.*.SessionOptionsAppendExecutionProvider_CUDA_V2.?(session_options, cuda_options));
+
     // create session from the model data
     var session: ?*ort.OrtSession = null;
     try checkStatus(api, api.*.CreateSessionFromArray.?(
