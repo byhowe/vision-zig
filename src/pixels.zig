@@ -1,4 +1,5 @@
 const std = @import("std");
+const stb = @import("stb");
 
 pub const ConversionError = error{
     InvalidDimensions,
@@ -49,4 +50,42 @@ inline fn yuyvToRgbPixel(yuyv: *const [4]u8, rgb: *[6]u8) void {
 
 inline fn fastClamp(val: i32) u8 {
     return @intCast(@max(0, @min(255, val)));
+}
+
+pub const JpegError = error{
+    DecodeFailed,
+    DimensionMismatch,
+    BufferTooSmall,
+};
+
+pub fn jpegToRgb(
+    jpeg: []const u8,
+    rgb: []u8,
+    expected_w: usize,
+    expected_h: usize,
+) JpegError!void {
+    var width = 0;
+    var height = 0;
+    var channels_in_file = 0;
+    const desired_channels = 3;
+
+    const decoded_ptr = stb.stbi_load_from_memory(
+        jpeg.ptr,
+        @intCast(jpeg.len),
+        &width,
+        &height,
+        &channels_in_file,
+        desired_channels,
+    ) orelse return error.DecodeFailed;
+    defer stb.stbi_image_free(decoded_ptr);
+
+    const w: usize = @intCast(width);
+    const h: usize = @intCast(height);
+
+    if (w != expected_w or h != expected_h) return error.DimensionMismatch;
+
+    const total_bytes = w * h * desired_channels;
+    if (rgb.len < total_bytes) return error.BufferTooSmall;
+
+    @memcpy(rgb[0..total_bytes], decoded_ptr.?[0..total_bytes]);
 }
