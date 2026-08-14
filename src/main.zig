@@ -48,7 +48,76 @@ pub fn main(init: std.process.Init) !void {
     const api = api_base.*.GetApi.?(ort.ORT_API_VERSION);
 
     var env: ?*ort.OrtEnv = null;
-    _ = api.*.CreateEnv.?(ort.ORT_LOGGING_LEVEL_WARNING, "YOLO", &env);
+    try checkStatus(api, api.*.CreateEnv.?(ort.ORT_LOGGING_LEVEL_WARNING, "YOLO", &env));
+    defer api.*.ReleaseEnv.?(env);
+
+    var session_options: ?*ort.OrtSessionOptions = null;
+    try checkStatus(api, api.*.CreateSessionOptions.?(&session_options));
+    defer api.*.ReleaseSessionOptions.?(session_options);
+
+    // create session from the model data
+    var session: ?*ort.OrtSession = null;
+    try checkStatus(api, api.*.CreateSessionFromArray.?(
+        env,
+        model_data.ptr,
+        model_data.len,
+        session_options,
+        &session,
+    ));
+    defer api.*.ReleaseSession.?(session);
+
+    var allocator: ?*ort.OrtAllocator = null;
+    try checkStatus(api, api.*.GetAllocatorWithDefaultOptions.?(&allocator));
+
+    // debug purposes
+
+    var num_input_nodes: usize = 0;
+    try checkStatus(api, api.*.SessionGetInputCount.?(session, &num_input_nodes));
+    std.debug.print("num inputs to the model = {d}\n", .{num_input_nodes});
+
+    var input_name_ptr: [*c]u8 = null;
+    for (0..num_input_nodes) |i| {
+        try checkStatus(api, api.*.SessionGetInputName.?(session, i, allocator, &input_name_ptr));
+
+        var type_info: ?*ort.OrtTypeInfo = null;
+        try checkStatus(api, api.*.SessionGetInputTypeInfo.?(session, i, &type_info));
+        defer api.*.ReleaseTypeInfo.?(type_info);
+
+        var tensor_info: ?*const ort.OrtTensorTypeAndShapeInfo = null;
+        try checkStatus(api, api.*.CastTypeInfoToTensorInfo.?(type_info, &tensor_info));
+
+        var num_dims: usize = 0;
+        try checkStatus(api, api.*.GetDimensionsCount.?(tensor_info, &num_dims));
+
+        const dims = try arena.alloc(i64, num_dims);
+        try checkStatus(api, api.*.GetDimensions.?(tensor_info, dims.ptr, num_dims));
+
+        std.debug.print("in {d}: name='{s}', shape={any}\n", .{ i, input_name_ptr, dims });
+    }
+
+    var num_output_nodes: usize = 0;
+    try checkStatus(api, api.*.SessionGetOutputCount.?(session, &num_output_nodes));
+    std.debug.print("num outputs of the model = {d}\n", .{num_output_nodes});
+
+    var output_name_ptr: [*c]u8 = null;
+    for (0..num_output_nodes) |i| {
+        try checkStatus(api, api.*.SessionGetOutputName.?(session, i, allocator, &output_name_ptr));
+
+        var type_info: ?*ort.OrtTypeInfo = null;
+        try checkStatus(api, api.*.SessionGetOutputTypeInfo.?(session, i, &type_info));
+        defer api.*.ReleaseTypeInfo.?(type_info);
+
+        var tensor_info: ?*const ort.OrtTensorTypeAndShapeInfo = null;
+        try checkStatus(api, api.*.CastTypeInfoToTensorInfo.?(type_info, &tensor_info));
+
+        var num_dims: usize = 0;
+        try checkStatus(api, api.*.GetDimensionsCount.?(tensor_info, &num_dims));
+
+        const dims = try arena.alloc(i64, num_dims);
+        try checkStatus(api, api.*.GetDimensions.?(tensor_info, dims.ptr, num_dims));
+
+        std.debug.print("out {d}: name='{s}', shape={any}\n", .{ i, output_name_ptr, dims });
+    }
 
     // RAYLIB
 
@@ -240,4 +309,13 @@ fn ioctl(fd: std.os.linux.fd_t, request: u32, arg: usize) !void {
     while (std.os.linux.errno(r) == .INTR) r = std.os.linux.ioctl(fd, request, arg);
     const errno = std.os.linux.errno(r);
     if (errno != .SUCCESS) return error.FailedIoctl;
+}
+
+fn checkStatus(api: *const ort.OrtApi, status: ?*ort.OrtStatus) !void {
+    if (status) |st| {
+        const msg = api.*.GetErrorMessage.?(st);
+        std.debug.print("ort error: {s}\n", .{msg});
+        api.*.ReleaseStatus.?(st);
+        return error.OrtError;
+    }
 }
