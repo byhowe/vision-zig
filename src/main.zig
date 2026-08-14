@@ -54,6 +54,11 @@ pub fn main(init: std.process.Init) !void {
     try checkStatus(api, api.*.CreateSessionOptions.?(&session_options));
     defer api.*.ReleaseSessionOptions.?(session_options);
 
+    // prevent cpu from drawing 200 watts. it draw 140 now :(.
+    try checkStatus(api, api.*.SetSessionGraphOptimizationLevel.?(session_options, ort.ORT_ENABLE_ALL));
+    // don't hammer all the cores.
+    try checkStatus(api, api.*.SetIntraOpNumThreads.?(session_options, 4));
+
     // create session from the model data
     var session: ?*ort.OrtSession = null;
     try checkStatus(api, api.*.CreateSessionFromArray.?(
