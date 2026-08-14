@@ -1,5 +1,5 @@
 const std = @import("std");
-const onnx = @import("onnx");
+const ort = @import("ort");
 const vl = @import("vl");
 const rl = @import("raylib");
 
@@ -18,7 +18,16 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
 
+    // ONNX
 
+    const api_base = ort.OrtGetApiBase().?;
+    const version = api_base.*.GetVersionString.?();
+    std.debug.print("onnx api version = {s}\n", .{version});
+
+    const api = api_base.*.GetApi.?(ort.ORT_API_VERSION);
+
+    var env: ?*ort.OrtEnv = null;
+    _ = api.*.CreateEnv.?(ort.ORT_LOGGING_LEVEL_WARNING, "YOLO", &env);
 
     // RAYLIB
 
