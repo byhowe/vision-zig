@@ -301,6 +301,7 @@ pub const ConversionError = error{
     BufferTooSmall,
 };
 
+// https://gist.github.com/wlhe/fcad2999ceb4a826bd811e9fdb6fe652
 pub fn yuyvToRgb(yuyv: []const u8, rgb: []u8, width: usize, height: usize) ConversionError!void {
     const num_pixels = width * height;
     const yuv_size = num_pixels * 2; // YUYV uses 2 bytes per pixel
