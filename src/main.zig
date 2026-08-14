@@ -6,8 +6,29 @@ const rl = @import("raylib");
 const DEVICE = "/dev/video0";
 const WIDTH = 640;
 const HEIGHT = 480;
+
+const YOLO_WIDTH = 640;
+const YOLO_HEIGHT = 640;
+
 const NUM_BUFFERS = 4;
 const TIMEOUT = 2000;
+
+const model_data: []const u8 = @embedFile("yolov8m.onnx");
+const model_labels = block: {
+    @setEvalBranchQuota(100_000);
+
+    const text = @embedFile("labels.txt");
+
+    var it = std.mem.tokenizeAny(u8, text, "\r\n");
+    var count = 0;
+    while (it.next()) |_| count += 1;
+
+    var arr: [count][]const u8 = undefined;
+    it = std.mem.tokenizeAny(u8, text, "\r\n");
+    for (&arr) |*item| item.* = it.next().?;
+
+    break :block arr;
+};
 
 const Buffer = struct {
     start: []align(std.heap.page_size_min) u8,
