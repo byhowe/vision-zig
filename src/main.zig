@@ -3,15 +3,14 @@ const ort = @import("ort");
 const vl = @import("vl");
 const rl = @import("raylib");
 
+const Video = @import("Video.zig");
+
 const DEVICE = "/dev/video0";
 const WIDTH = 640;
 const HEIGHT = 480;
 
 const YOLO_WIDTH = 640;
 const YOLO_HEIGHT = 640;
-
-const NUM_BUFFERS = 4;
-const TIMEOUT = 2000;
 
 const model_data: []const u8 = @embedFile("yolov8m.onnx");
 // in 0: name='images', shape={ 1, 3, 640, 640 }
@@ -31,11 +30,6 @@ const model_labels = block: {
     for (&arr) |*item| item.* = it.next().?;
 
     break :block arr;
-};
-
-const Buffer = struct {
-    start: []align(std.heap.page_size_min) u8,
-    length: usize,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -107,75 +101,19 @@ pub fn main(init: std.process.Init) !void {
 
     // V4L2
 
-    const fd = try std.posix.openat(
-        std.posix.AT.FDCWD,
-        DEVICE,
-        .{ .ACCMODE = .RDWR, .CLOEXEC = true },
-        0,
-    );
-    defer std.Io.Threaded.closeFd(fd);
+    var video = try Video.init(DEVICE);
+    defer video.deinit();
 
-    var fmt = vl.v4l2_format{};
-    fmt.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = WIDTH;
-    fmt.fmt.pix.height = HEIGHT;
-    fmt.fmt.pix.pixelformat = vl.V4L2_PIX_FMT_YUYV;
-    fmt.fmt.pix.field = vl.V4L2_FIELD_NONE;
-    try ioctl(fd, vl.VIDIOC_S_FMT, @intFromPtr(&fmt));
-
-    // set fps
-    var parm = vl.v4l2_streamparm{};
-    parm.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    parm.parm.capture.timeperframe.numerator = 1;
-    parm.parm.capture.timeperframe.denominator = 10;
-    try ioctl(fd, vl.VIDIOC_S_PARM, @intFromPtr(&parm));
-    // NOTE: driver picks whatever format is available regardless of what we set.
-    std.debug.print("driver fps = {d}\n", .{parm.parm.capture.timeperframe.denominator});
-
-    var req = vl.v4l2_requestbuffers{};
-    req.count = NUM_BUFFERS;
-    req.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    req.memory = vl.V4L2_MEMORY_MMAP;
-    try ioctl(fd, vl.VIDIOC_REQBUFS, @intFromPtr(&req));
-
-    std.debug.print("buffer count = {d}\n", .{req.count});
-
-    var buf: vl.v4l2_buffer = undefined;
-    var buffers: [NUM_BUFFERS]Buffer = undefined;
-
-    for (0..NUM_BUFFERS) |i| {
-        buf = vl.v4l2_buffer{};
-        buf.index = @intCast(i);
-        buf.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = vl.V4L2_MEMORY_MMAP;
-        try ioctl(fd, vl.VIDIOC_QUERYBUF, @intFromPtr(&buf));
-
-        const ptr = try std.posix.mmap(
-            null,
-            buf.length,
-            .{ .READ = true, .WRITE = true },
-            .{ .TYPE = .SHARED },
-            fd,
-            buf.m.offset,
-        );
-
-        buffers[i].start = ptr;
-        buffers[i].length = buf.length;
-
-        buf = vl.v4l2_buffer{};
-        buf.index = @intCast(i);
-        buf.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = vl.V4L2_MEMORY_MMAP;
-        try ioctl(fd, vl.VIDIOC_QBUF, @intFromPtr(&buf));
-    }
-
-    defer for (0..NUM_BUFFERS) |i| std.posix.munmap(buffers[i].start);
-
-    const ty = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    try ioctl(fd, vl.VIDIOC_STREAMON, @intFromPtr(&ty));
+    try video.setFormat(WIDTH, HEIGHT);
+    _ = try video.setFramerate(30); // we don't really care about the actual framerate
+    try video.requestBuffers(arena);
+    try video.mapBuffers();
+    defer video.unmapBuffers() catch {};
+    try video.queueBuffers();
+    try video.streamon();
 
     var pfds = [_]std.posix.pollfd{.{
-        .fd = fd,
+        .fd = video.fd,
         .events = std.posix.POLL.IN,
         .revents = 0,
     }};
@@ -189,10 +127,10 @@ pub fn main(init: std.process.Init) !void {
         _ = try std.posix.poll(&pfds, 0);
 
         if ((pfds[0].revents & std.posix.POLL.IN) != 0) {
-            buf = vl.v4l2_buffer{};
+            var buf = vl.v4l2_buffer{};
             buf.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
             buf.memory = vl.V4L2_MEMORY_MMAP;
-            try ioctl(fd, vl.VIDIOC_DQBUF, @intFromPtr(&buf));
+            try ioctl(video.fd, vl.VIDIOC_DQBUF, @intFromPtr(&buf));
 
             const new_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
             const time_elapsed = new_frame_timestamp - last_frame_timestmap;
@@ -202,10 +140,10 @@ pub fn main(init: std.process.Init) !void {
             // It fluctuates between 15 fps and 30 fps.
             const fps_estimated = @as(f32, @floatFromInt(std.time.ns_per_s)) / @as(f32, @floatFromInt(time_elapsed));
 
-            try yuyvToRgb(buffers[buf.index].start, @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
+            try yuyvToRgb(video.buffers[buf.index].ptr, @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
             rl.updateTexture(texture, @ptrCast(texture_data.ptr));
 
-            try ioctl(fd, vl.VIDIOC_QBUF, @intFromPtr(&buf));
+            try ioctl(video.fd, vl.VIDIOC_QBUF, @intFromPtr(&buf));
 
             preprocessYolo(texture_data[0..texture_size], input_tensor_data, WIDTH, HEIGHT, YOLO_WIDTH, YOLO_HEIGHT);
 
