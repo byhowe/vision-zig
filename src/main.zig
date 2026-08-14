@@ -209,6 +209,27 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
+// Convert an RGB frame into CHW f32 normalized array with top-left letterboxing
+fn preprocessYolo(rgb: []const u8, tensor: []f32, src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) void {
+    // set all pixels to black initially.
+    @memset(tensor, 0.0);
+    const channel_stride = dst_w * dst_h;
+
+    const max_y = @min(src_h, dst_h);
+    const max_x = @min(src_w, dst_w);
+
+    for (0..max_y) |y| {
+        for (0..max_x) |x| {
+            const src_idx = (y * src_w + x) * 3;
+            const dst_idx = (y * dst_w) + x;
+
+            tensor[0 * channel_stride + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 0])) / 255.0;
+            tensor[1 * channel_stride + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 1])) / 255.0;
+            tensor[2 * channel_stride + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 2])) / 255.0;
+        }
+    }
+}
+
 pub const ConversionError = error{
     InvalidDimensions,
     BufferTooSmall,
