@@ -251,10 +251,39 @@ pub fn main(init: std.process.Init) !void {
         }
 
         rl.beginDrawing();
-
         rl.clearBackground(rl.Color.black);
+
         rl.drawTexture(texture, 0, 0, rl.Color.white);
         rl.drawFPS(10, 10);
+
+        // confidence threshold = 0.35
+        if (top.score > 0.35) {
+            // convert yolo [cx, cy, w, h] into raylib [x, y, w, h]
+            const box_w = top.w;
+            const box_h = top.h;
+            const box_x = top.cx - (box_w / 2.0);
+            const box_y = top.cy - (box_h / 2.0);
+
+            const rect = rl.Rectangle{
+                .x = box_x,
+                .y = box_y,
+                .width = box_w,
+                .height = box_h,
+            };
+
+            rl.drawRectangleLinesEx(rect, 3.0, rl.Color.lime);
+
+            var label_buffer: [64]u8 = undefined;
+            const label_text = std.fmt.bufPrintZ(&label_buffer, "{s}: {d:.2}%", .{ model_labels[top.class_id], top.score * 100.0 }) catch "error";
+
+            // draw background for the text
+            const text_size = 20;
+            const text_width = rl.measureText(label_text, text_size);
+            rl.drawRectangle(@intFromFloat(box_x), @as(i32, @intFromFloat(box_y)) - text_size, text_width + 10, text_size, rl.Color.lime);
+
+            // draw label
+            rl.drawText(label_text, @intFromFloat(box_x + 5), @as(i32, @intFromFloat(box_y)) - text_size, text_size, rl.Color.black);
+        }
 
         rl.endDrawing();
     }
