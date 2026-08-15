@@ -240,21 +240,25 @@ fn preprocessYolo(rgb: []const u8, tensor: []f32, src_w: usize, src_h: usize, ds
     }
 }
 
-// Copies the source RGB array into the destination array, cropping the frame to fit. Fills the empty space with black.
+// Copies the source RGB array into the destination array, cropping the frame to fit.
+// The caller must ensure that the destination is memset to 0.
 pub fn cropRgbFrame(src_rgb: []const u8, src_w: usize, src_h: usize, dst_rgb: []u8, dst_w: usize, dst_h: usize, x0: usize, y0: usize) !void {
     if (src_rgb.len != src_w * src_h * 3) return error.InvalidBufferSize;
     if (dst_rgb.len != dst_w * dst_h * 3) return error.InvalidBufferSize;
 
-    for (0..dst_h) |y| {
-        for (0..dst_w) |x| {
-            const src_x = @min(src_w - 1, x0 + x);
-            const src_y = @min(src_h - 1, y0 + y);
+    // completely outside the src image.
+    if (x0 >= src_w or y0 >= src_h) return;
 
-            const src_idx = ((src_w * src_y) + src_x) * 3;
-            const dst_idx = ((dst_w * y) + x) * 3;
+    const copy_w = @min(dst_w, src_w - x0);
+    const copy_h = @min(dst_h, src_h - y0);
 
-            dst_rgb[dst_idx..][0..3].* = src_rgb[src_idx..][0..3].*;
-        }
+    for (0..copy_h) |y| {
+        const src_y = y0 + y;
+
+        const src_idx = ((src_w * src_y) + x0) * 3;
+        const dst_idx = (dst_w * y) * 3;
+
+        @memcpy(dst_rgb[dst_idx .. dst_idx + copy_w * 3], src_rgb[src_idx .. src_idx + copy_w * 3]);
     }
 }
 
