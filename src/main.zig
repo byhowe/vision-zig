@@ -62,7 +62,7 @@ pub fn main(init: std.process.Init) !void {
     }};
 
     // track the actual frame time
-    var last_frame_timestmap = std.Io.Clock.awake.now(io).nanoseconds;
+    var last_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
 
     var top: Yolo.Prediction = .{};
 
@@ -75,8 +75,8 @@ pub fn main(init: std.process.Init) !void {
             try pixels.jpegToRgb(frame_buffer, texture_data, WIDTH, HEIGHT);
 
             const new_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
-            const time_elapsed = new_frame_timestamp - last_frame_timestmap;
-            last_frame_timestmap = new_frame_timestamp;
+            const time_elapsed = new_frame_timestamp - last_frame_timestamp;
+            last_frame_timestamp = new_frame_timestamp;
 
             // NOTE: Interesting. the fps is much more erradic when the webcam privacy is on.
             // It fluctuates between 15 fps and 30 fps.
