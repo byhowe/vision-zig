@@ -19,6 +19,11 @@ const YOLO_H_F32: f32 = @floatFromInt(Yolo.HEIGHT);
 const HALF_YOLO_W: f32 = YOLO_W_F32 / 2.0;
 const HALF_YOLO_H: f32 = YOLO_H_F32 / 2.0;
 
+const W_F32: f32 = @floatFromInt(WIDTH);
+const H_F32: f32 = @floatFromInt(HEIGHT);
+const HALF_W: f32 = W_F32 / 2.0;
+const HALF_H: f32 = H_F32 / 2.0;
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -138,6 +143,15 @@ pub fn main(init: std.process.Init) !void {
         const fps_text = std.fmt.bufPrintZ(&fps_text_buffer, "FPS: {d:.2}", .{real_fps}) catch unreachable;
         rl.drawText(fps_text, 10, 10, 20, rl.Color.lime);
 
+        // draw rectangle of where the model is seeing.
+        rl.drawRectangleLines(
+            @intFromFloat(center[0] - HALF_YOLO_W),
+            @intFromFloat(center[1] - HALF_YOLO_H),
+            Yolo.WIDTH,
+            Yolo.HEIGHT,
+            rl.Color.red,
+        );
+
         if (top.score > CONFIDENCE_THRESHOLD) {
             // convert yolo [cx, cy, w, h] into raylib [x, y, w, h]
             const box_w = top.w;
@@ -177,15 +191,6 @@ pub fn main(init: std.process.Init) !void {
                 text_size,
                 rl.Color.black,
             );
-
-            // draw rectangle of where the model is seeing.
-            rl.drawRectangleLines(
-                @intFromFloat(center[0] - HALF_YOLO_W),
-                @intFromFloat(center[1] - HALF_YOLO_H),
-                Yolo.WIDTH,
-                Yolo.HEIGHT,
-                rl.Color.dark_gray,
-            );
         }
     }
 }
@@ -195,12 +200,16 @@ const EMA = struct {
 
     ema_x: f32,
     ema_y: f32,
-    sigma: f32,
 
+    search_target_x: f32,
+    search_target_y: f32,
+
+    sigma: f32,
     prng: std.Random.DefaultPrng,
 
     // tuning
     const alpha: f32 = 0.2; // how fast EMA follow the target
+    const drift_alpha: f32 = 0.1;
     const sigma_min: f32 = 1.0;
     const sigma_max: f32 = 400.0;
     const sigma_growth: f32 = 1.15;
@@ -212,6 +221,8 @@ const EMA = struct {
         return .{
             .ema_x = @as(f32, @floatFromInt(WIDTH)) / 2.0,
             .ema_y = @as(f32, @floatFromInt(HEIGHT)) / 2.0,
+            .search_target_x = HALF_W,
+            .search_target_y = HALF_H,
             .sigma = sigma_max,
             .prng = .init(seed),
         };
@@ -219,18 +230,9 @@ const EMA = struct {
 
     // Returns the mid position of the EMA as f32
     pub fn center(self: *Self) [2]f32 {
-        var rand = self.prng.random();
-
-        // generate 2d standard normal random variables
-        const zx = rand.floatNorm(f32);
-        const zy = rand.floatNorm(f32);
-
-        const cx = self.ema_x + zx * self.sigma;
-        const cy = self.ema_y + zy * self.sigma;
-
         return .{
-            std.math.clamp(cx, HALF_YOLO_W, @as(f32, @floatFromInt(WIDTH)) - HALF_YOLO_W),
-            std.math.clamp(cy, HALF_YOLO_H, @as(f32, @floatFromInt(HEIGHT)) - HALF_YOLO_H),
+            std.math.clamp(self.ema_x, HALF_YOLO_W, W_F32 - HALF_YOLO_W),
+            std.math.clamp(self.ema_y, HALF_YOLO_H, H_F32 - HALF_YOLO_H),
         };
     }
 
@@ -238,9 +240,30 @@ const EMA = struct {
         if (detected) {
             self.ema_x = (alpha * target_x) + ((1.0 - alpha) * self.ema_x);
             self.ema_y = (alpha * target_y) + ((1.0 - alpha) * self.ema_y);
-            self.sigma = sigma_min; // TODO: work on making the reduction smooth as well.
+
+            self.sigma = (alpha * sigma_min) + ((1.0 - alpha) * self.sigma);
+
+            self.search_target_x = self.ema_x;
+            self.search_target_y = self.ema_y;
         } else {
             self.sigma = @min(sigma_max, self.sigma * sigma_growth);
+
+            const dx = self.search_target_x - self.ema_x;
+            const dy = self.search_target_y - self.ema_y;
+            const dist_sq = (dx * dx) + (dy * dy);
+
+            if (dist_sq < 100.0) {
+                var rand = self.prng.random();
+
+                const new_tx = HALF_W + (rand.floatNorm(f32) * self.sigma);
+                const new_ty = HALF_H + (rand.floatNorm(f32) * self.sigma);
+
+                self.search_target_x = std.math.clamp(new_tx, HALF_YOLO_W, W_F32 - HALF_YOLO_W);
+                self.search_target_y = std.math.clamp(new_ty, HALF_YOLO_H, H_F32 - HALF_YOLO_H);
+            }
+
+            self.ema_x = (drift_alpha * self.search_target_x) + ((1.0 - drift_alpha) * self.ema_x);
+            self.ema_y = (drift_alpha * self.search_target_y) + ((1.0 - drift_alpha) * self.ema_y);
         }
     }
 };
