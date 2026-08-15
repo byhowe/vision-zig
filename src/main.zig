@@ -39,7 +39,7 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("raylib version = {s}\n", .{rl.RAYLIB_VERSION});
 
     rl.initWindow(WIDTH, HEIGHT, "YOLO");
-    rl.setTargetFPS(30);
+    rl.setTargetFPS(120);
     defer rl.closeWindow();
 
     const texture_size = WIDTH * HEIGHT * 3;
@@ -79,6 +79,12 @@ pub fn main(init: std.process.Init) !void {
     var real_fps: f32 = 0.0;
     var top: Yolo.Prediction = .{};
 
+    var last_ema_timestamp = last_frame_timestamp;
+    var latest_detected: bool = false;
+    var latest_target_x: f32 = HALF_W;
+    var latest_target_y: f32 = HALF_H;
+    var inference_center: [2]f32 = .{ HALF_W, HALF_H };
+
     // TODO: optimization: instead of filling a cropped version every frame, feed the infer
     // function with the uncropped version and let it fill its internal f32 buffer with the
     // cropped version directly. this is currently just an intermediary buffer.
@@ -86,12 +92,14 @@ pub fn main(init: std.process.Init) !void {
     @memset(rgb_cropped, 0); // Initialize to black
 
     var ema = EMA.init(io);
-    var center: [2]f32 = .{
-        @as(f32, @floatFromInt(WIDTH)) / 2.0,
-        @as(f32, @floatFromInt(HEIGHT)) / 2.0,
-    };
+    var center: [2]f32 = .{ HALF_W, HALF_H };
 
     while (!rl.windowShouldClose()) {
+        const current_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
+        const dt_ns = current_timestamp - last_ema_timestamp;
+        last_ema_timestamp = current_timestamp;
+        const dt: f32 = @as(f32, @floatFromInt(dt_ns)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+
         _ = try std.posix.poll(&pfds, 0);
 
         if ((pfds[0].revents & std.posix.POLL.IN) != 0) {
@@ -111,7 +119,8 @@ pub fn main(init: std.process.Init) !void {
             // NOTE: Interesting. the fps is much more erradic when the webcam privacy is on.
             // It fluctuates between 15 fps and 30 fps.
 
-            center = ema.center();
+            // save the center of the inference
+            inference_center = center;
 
             try pixels.cropRgbFrame(
                 texture_data,
@@ -120,18 +129,21 @@ pub fn main(init: std.process.Init) !void {
                 rgb_cropped,
                 Yolo.WIDTH,
                 Yolo.HEIGHT,
-                @intFromFloat(center[0] - HALF_YOLO_W),
-                @intFromFloat(center[1] - HALF_YOLO_H),
+                @intFromFloat(inference_center[0] - HALF_YOLO_W),
+                @intFromFloat(inference_center[1] - HALF_YOLO_H),
             );
 
             top = try model.infer(rgb_cropped, Yolo.WIDTH, Yolo.HEIGHT);
 
-            ema.update(
-                top.score > CONFIDENCE_THRESHOLD,
-                center[0] - HALF_YOLO_W + top.cx,
-                center[1] - HALF_YOLO_H + top.cy,
-            );
+            latest_detected = top.score > CONFIDENCE_THRESHOLD;
+            if (latest_detected) {
+                latest_target_x = inference_center[0] - HALF_YOLO_W + top.cx;
+                latest_target_y = inference_center[1] - HALF_YOLO_H + top.cy;
+            }
         }
+
+        ema.update(dt, latest_detected, latest_target_x, latest_target_y);
+        center = ema.center();
 
         rl.beginDrawing();
         defer rl.endDrawing();
@@ -160,8 +172,8 @@ pub fn main(init: std.process.Init) !void {
             const box_y = top.cy - (box_h / 2.0);
 
             const rect = rl.Rectangle{
-                .x = box_x + center[0] - HALF_YOLO_W,
-                .y = box_y + center[1] - HALF_YOLO_H,
+                .x = box_x + inference_center[0] - HALF_YOLO_W,
+                .y = box_y + inference_center[1] - HALF_YOLO_H,
                 .width = box_w,
                 .height = box_h,
             };
@@ -208,11 +220,11 @@ const EMA = struct {
     prng: std.Random.DefaultPrng,
 
     // tuning
-    const alpha: f32 = 0.2; // how fast EMA follow the target
-    const drift_alpha: f32 = 0.1;
+    const track_speed: f32 = 4.0;
+    const drift_speed: f32 = 2.0;
     const sigma_min: f32 = 1.0;
     const sigma_max: f32 = 400.0;
-    const sigma_growth: f32 = 1.15;
+    const sigma_growth_speed: f32 = 4.0;
 
     pub fn init(io: std.Io) Self {
         var seed: u64 = undefined;
@@ -236,8 +248,9 @@ const EMA = struct {
         };
     }
 
-    pub fn update(self: *Self, detected: bool, target_x: f32, target_y: f32) void {
+    pub fn update(self: *Self, dt: f32, detected: bool, target_x: f32, target_y: f32) void {
         if (detected) {
+            const alpha = 1.0 - std.math.exp(-dt * track_speed);
             self.ema_x = (alpha * target_x) + ((1.0 - alpha) * self.ema_x);
             self.ema_y = (alpha * target_y) + ((1.0 - alpha) * self.ema_y);
 
@@ -246,7 +259,7 @@ const EMA = struct {
             self.search_target_x = self.ema_x;
             self.search_target_y = self.ema_y;
         } else {
-            self.sigma = @min(sigma_max, self.sigma * sigma_growth);
+            self.sigma = @min(sigma_max, self.sigma * std.math.exp(sigma_growth_speed * dt));
 
             const dx = self.search_target_x - self.ema_x;
             const dy = self.search_target_y - self.ema_y;
@@ -262,6 +275,7 @@ const EMA = struct {
                 self.search_target_y = std.math.clamp(new_ty, HALF_YOLO_H, H_F32 - HALF_YOLO_H);
             }
 
+            const drift_alpha = 1.0 - std.math.exp(-dt * drift_speed);
             self.ema_x = (drift_alpha * self.search_target_x) + ((1.0 - drift_alpha) * self.ema_x);
             self.ema_y = (drift_alpha * self.search_target_y) + ((1.0 - drift_alpha) * self.ema_y);
         }
