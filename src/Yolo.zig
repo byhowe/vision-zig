@@ -1,7 +1,7 @@
 const std = @import("std");
 const ort = @import("ort");
 
-const model_data: []const u8 = @embedFile("yolov8m.onnx");
+const model_data: []const u8 = @embedFile("yolov8n.onnx");
 // in 0: name='images', shape={ 1, 3, 640, 640 }
 // out 0: name='output0', shape={ 1, 84, 8400 }
 
@@ -21,8 +21,11 @@ pub const model_labels = block: {
     break :block arr;
 };
 
-pub const WIDTH = 640;
-pub const HEIGHT = 640;
+pub const WIDTH = 320;
+pub const HEIGHT = 320;
+pub const NUM_ANCHORS = 2100; // for imgsz=320
+// pub const NUM_ANCHORS = 8400; // for imgsz=640
+// TODO: obtain NUM_ANCHORS dynamically.
 
 const Self = @This();
 
@@ -150,7 +153,7 @@ pub fn infer(self: *Self, rgb_frame: []const u8, src_w: usize, src_h: usize) !Pr
     var out_ptr: [*c]f32 = null;
     try checkStatus(self.api, self.api.*.GetTensorMutableData.?(output_tensor, @ptrCast(&out_ptr)));
 
-    const top = getTopPrediction(out_ptr, 8400);
+    const top = getTopPrediction(out_ptr, NUM_ANCHORS);
     return top;
 }
 
