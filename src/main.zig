@@ -9,8 +9,8 @@ const Video = @import("Video.zig");
 const Yolo = @import("Yolo.zig");
 
 const DEVICE = "/dev/video0";
-const WIDTH = 640;
-const HEIGHT = 480;
+const WIDTH = 1280;
+const HEIGHT = 720;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -31,11 +31,11 @@ pub fn main(init: std.process.Init) !void {
     defer rl.closeWindow();
 
     const texture_size = WIDTH * HEIGHT * 3;
-    const rgb_buffer = try arena.alloc(u8, texture_size);
-    @memset(rgb_buffer, 0); // Initialize to black
+    const texture_data = try arena.alloc(u8, texture_size);
+    @memset(texture_data, 0); // Initialize to black
 
     const texture_image = rl.Image{
-        .data = @ptrCast(rgb_buffer.ptr),
+        .data = @ptrCast(texture_data.ptr),
         .width = WIDTH,
         .height = HEIGHT,
         .mipmaps = 1,
@@ -67,18 +67,32 @@ pub fn main(init: std.process.Init) !void {
     var real_fps: f32 = 0.0;
     var top: Yolo.Prediction = .{};
 
-    const big_buffer = try arena.alloc(u8, texture_size);
-    @memset(big_buffer, 0); // Initialize to black
+    const rgb_cropped = try arena.alloc(u8, Yolo.WIDTH * Yolo.HEIGHT * 3);
+    @memset(rgb_cropped, 0); // Initialize to black
 
     while (!rl.windowShouldClose()) {
         _ = try std.posix.poll(&pfds, 0);
 
         if ((pfds[0].revents & std.posix.POLL.IN) != 0) {
             const jpeg_buffer = try video.dequeueBuffer();
-            try pixels.jpegToRgb(jpeg_buffer, big_buffer, WIDTH, HEIGHT);
+            try pixels.jpegToRgb(jpeg_buffer, texture_data, WIDTH, HEIGHT);
             try video.queueBuffer(jpeg_buffer); // return to kernel immediately, probably not a huge deal
 
-            try pixels.cropRgbFrame(big_buffer, WIDTH, HEIGHT, rgb_buffer, WIDTH, HEIGHT, 320, 240);
+            // TODO: we may have a setting where we use yuyv or mjpeg. so keep this around for now.
+            // try pixels.yuyvToRgb(frame_buffer, @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
+            rl.updateTexture(texture, @ptrCast(texture_data.ptr));
+
+            try pixels.cropRgbFrame(
+                texture_data,
+                WIDTH,
+                HEIGHT,
+                rgb_cropped,
+                Yolo.WIDTH,
+                Yolo.HEIGHT,
+                // middle of the frame
+                320,
+                40,
+            );
 
             // calculate real fps obtained by the frame arrival times
             const new_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
@@ -88,11 +102,7 @@ pub fn main(init: std.process.Init) !void {
             // NOTE: Interesting. the fps is much more erradic when the webcam privacy is on.
             // It fluctuates between 15 fps and 30 fps.
 
-            // TODO: we may have a setting where we use yuyv or mjpeg. so keep this around for now.
-            // try pixels.yuyvToRgb(frame_buffer, @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
-            rl.updateTexture(texture, @ptrCast(rgb_buffer.ptr));
-
-            top = try model.infer(rgb_buffer, WIDTH, HEIGHT);
+            top = try model.infer(rgb_cropped, Yolo.WIDTH, Yolo.HEIGHT);
         }
 
         rl.beginDrawing();
@@ -113,8 +123,8 @@ pub fn main(init: std.process.Init) !void {
             const box_y = top.cy - (box_h / 2.0);
 
             const rect = rl.Rectangle{
-                .x = box_x,
-                .y = box_y,
+                .x = box_x + 320.0,
+                .y = box_y + 40.0,
                 .width = box_w,
                 .height = box_h,
             };
@@ -129,8 +139,8 @@ pub fn main(init: std.process.Init) !void {
             const text_width = rl.measureText(label_text, text_size);
 
             rl.drawRectangle(
-                @intFromFloat(box_x),
-                @as(i32, @intFromFloat(box_y)) - text_size,
+                @intFromFloat(rect.x),
+                @as(i32, @intFromFloat(rect.y)) - text_size,
                 text_width + 10,
                 text_size,
                 rl.Color.lime,
@@ -139,8 +149,8 @@ pub fn main(init: std.process.Init) !void {
             // draw label
             rl.drawText(
                 label_text,
-                @intFromFloat(box_x + 5),
-                @as(i32, @intFromFloat(box_y)) - text_size,
+                @intFromFloat(rect.x + 5),
+                @as(i32, @intFromFloat(rect.y)) - text_size,
                 text_size,
                 rl.Color.black,
             );

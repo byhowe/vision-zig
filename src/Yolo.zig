@@ -21,8 +21,8 @@ pub const model_labels = block: {
     break :block arr;
 };
 
-const YOLO_WIDTH = 640;
-const YOLO_HEIGHT = 640;
+pub const WIDTH = 640;
+pub const HEIGHT = 640;
 
 const Self = @This();
 
@@ -83,9 +83,9 @@ pub fn init(arena: std.mem.Allocator) !Self {
     errdefer api.*.ReleaseMemoryInfo.?(memory_info);
 
     // arena allocate buffer for the input tensor. we already know the size from the previous debug prints.
-    const input_tensor_len = 1 * 3 * YOLO_HEIGHT * YOLO_WIDTH;
+    const input_tensor_len = 1 * 3 * HEIGHT * WIDTH;
     const input_tensor_data = try arena.alloc(f32, input_tensor_len);
-    const input_shape = [_]i64{ 1, 3, YOLO_HEIGHT, YOLO_WIDTH };
+    const input_shape = [_]i64{ 1, 3, HEIGHT, WIDTH };
 
     return .{
         .api = api.?,
@@ -110,8 +110,8 @@ pub fn infer(self: *Self, rgb_frame: []const u8, src_w: usize, src_h: usize) !Pr
         self.input_tensor_data,
         src_w,
         src_h,
-        YOLO_WIDTH,
-        YOLO_HEIGHT,
+        WIDTH,
+        HEIGHT,
     );
 
     // FIXME: the documentation says we need to free these with the allocator. how do we do that?
