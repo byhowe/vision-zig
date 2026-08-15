@@ -52,7 +52,6 @@ pub fn main(init: std.process.Init) !void {
     try video.requestBuffers(arena);
     try video.mapBuffers();
     defer video.unmapBuffers() catch {};
-    try video.queueBuffers();
     try video.streamon();
     defer video.streamoff() catch {};
 
@@ -71,7 +70,7 @@ pub fn main(init: std.process.Init) !void {
         _ = try std.posix.poll(&pfds, 0);
 
         if ((pfds[0].revents & std.posix.POLL.IN) != 0) {
-            const idx = try video.dequeueBuffer();
+            const frame_buffer = try video.dequeueBuffer();
 
             const new_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
             const time_elapsed = new_frame_timestamp - last_frame_timestmap;
@@ -84,11 +83,11 @@ pub fn main(init: std.process.Init) !void {
             try pixels.yuyvToRgb(video.buffers[idx], @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
             rl.updateTexture(texture, @ptrCast(texture_data.ptr));
 
-            try video.queueBuffer(idx);
+            try video.queueBuffer(frame_buffer);
 
             top = try model.infer(texture_data, WIDTH, HEIGHT);
 
-            std.debug.print("fps = {d:.2} | {s} confidence = {d:.0}\n", .{ fps_estimated, Yolo.model_labels[top.class_id], top.score });
+            std.debug.print("fps = {d:.2} | {s} confidence = {d:.2}\n", .{ fps_estimated, Yolo.model_labels[top.class_id], top.score });
         }
 
         rl.beginDrawing();

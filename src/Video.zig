@@ -36,7 +36,7 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn setFormat(self: *Self, width: usize, height: usize) !void {
-    var fmt = vl.v4l2_format{};
+    var fmt = std.mem.zeroes(vl.v4l2_format);
     fmt.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
     fmt.fmt.pix.width = @intCast(width);
     fmt.fmt.pix.height = @intCast(height);
@@ -44,10 +44,13 @@ pub fn setFormat(self: *Self, width: usize, height: usize) !void {
     fmt.fmt.pix.pixelformat = vl.V4L2_PIX_FMT_YUYV;
     fmt.fmt.pix.field = vl.V4L2_FIELD_NONE;
     try ioctl(self.fd, vl.VIDIOC_S_FMT, @intFromPtr(&fmt));
+
+    if (vl.V4L2_PIX_FMT_MJPEG != fmt.fmt.pix.pixelformat) std.log.warn("driver reset the camera pixel format", .{});
+    if (width != fmt.fmt.pix.width or height != fmt.fmt.pix.height) std.log.warn("driver reset the resolution to {d}x{d}", .{ fmt.fmt.pix.width, fmt.fmt.pix.height });
 }
 
 pub fn setFramerate(self: *Self, framerate: usize) !usize {
-    var parm = vl.v4l2_streamparm{};
+    var parm = std.mem.zeroes(vl.v4l2_streamparm);
     parm.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
     parm.parm.capture.timeperframe.numerator = 1;
     parm.parm.capture.timeperframe.denominator = @intCast(framerate);
@@ -58,11 +61,13 @@ pub fn setFramerate(self: *Self, framerate: usize) !usize {
 }
 
 pub fn requestBuffers(self: *Self, arena: std.mem.Allocator) !void {
-    var req = vl.v4l2_requestbuffers{};
+    var req = std.mem.zeroes(vl.v4l2_requestbuffers);
     req.count = NUM_BUFFERS;
     req.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = vl.V4L2_MEMORY_MMAP;
     try ioctl(self.fd, vl.VIDIOC_REQBUFS, @intFromPtr(&req));
+
+    if (NUM_BUFFERS != req.count) std.log.warn("driver changed the number of buffers: {d} -> {d}", .{ NUM_BUFFERS, req.count });
 
     // set the internal number of buffers
     self.buffers = try arena.alloc(Buffer, @intCast(req.count));
@@ -70,13 +75,13 @@ pub fn requestBuffers(self: *Self, arena: std.mem.Allocator) !void {
 
 pub fn mapBuffers(self: *Self) !void {
     for (0..self.buffers.len) |i| {
-        var buffer = vl.v4l2_buffer{};
+        var buffer = std.mem.zeroes(vl.v4l2_buffer);
         buffer.index = @intCast(i);
         buffer.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
         buffer.memory = vl.V4L2_MEMORY_MMAP;
         try ioctl(self.fd, vl.VIDIOC_QUERYBUF, @intFromPtr(&buffer));
 
-        const mem = try std.posix.mmap(
+        self.buffers[i] = try std.posix.mmap(
             null,
             buffer.length,
             .{ .READ = true, .WRITE = true },
@@ -85,7 +90,9 @@ pub fn mapBuffers(self: *Self) !void {
             buffer.m.offset,
         );
 
-        self.buffers[i] = mem;
+        // queue buffer so that the kernel can start doing its job
+        // NOTE: I didn't know if we needed to use the exact &buffer that the kernel touched or if we can recreate it as we do in queueBuffer.
+        try ioctl(self.fd, vl.VIDIOC_QBUF, @intFromPtr(&buffer));
     }
 }
 
@@ -93,25 +100,25 @@ pub fn unmapBuffers(self: *Self) !void {
     for (0..self.buffers.len) |i| std.posix.munmap(self.buffers[i]);
 }
 
-pub fn queueBuffers(self: *Self) !void {
-    for (0..self.buffers.len) |i| try self.queueBuffer(i);
+pub fn queueBuffer(self: *Self, buffer: []const u8) !void {
+    const idx = for (0..self.buffers.len) |i| {
+        if (buffer.ptr == self.buffers[i].ptr) break i;
+    } else return error.InvalidBuffer;
+
+    var buf = std.mem.zeroes(vl.v4l2_buffer);
+    buf.index = @intCast(idx);
+    buf.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    buf.memory = vl.V4L2_MEMORY_MMAP;
+    try ioctl(self.fd, vl.VIDIOC_QBUF, @intFromPtr(&buf));
 }
 
-pub fn queueBuffer(self: *Self, idx: usize) !void {
-    var buffer = std.mem.zeroes(vl.v4l2_buffer);
-    buffer.index = @intCast(idx);
-    buffer.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    buffer.memory = vl.V4L2_MEMORY_MMAP;
-    try ioctl(self.fd, vl.VIDIOC_QBUF, @intFromPtr(&buffer));
-}
-
-pub fn dequeueBuffer(self: *Self) !usize {
+pub fn dequeueBuffer(self: *Self) ![]const u8 {
     var buf = std.mem.zeroes(vl.v4l2_buffer);
     buf.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = vl.V4L2_MEMORY_MMAP;
     try ioctl(self.fd, vl.VIDIOC_DQBUF, @intFromPtr(&buf));
 
-    return buf.index;
+    return self.buffers[buf.index][0..buf.bytesused];
 }
 
 pub fn streamon(self: *Self) !void {
