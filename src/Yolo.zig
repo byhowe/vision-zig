@@ -240,6 +240,24 @@ fn preprocessYolo(rgb: []const u8, tensor: []f32, src_w: usize, src_h: usize, ds
     }
 }
 
+// Copies the source RGB array into the destination array, cropping the frame to fit. Fills the empty space with black.
+pub fn cropRgbFrame(src_rgb: []const u8, src_w: usize, src_h: usize, dst_rgb: []u8, dst_w: usize, dst_h: usize, x0: usize, y0: usize) !void {
+    if (src_rgb.len != src_w * src_h * 3) return error.InvalidBufferSize;
+    if (dst_rgb.len != dst_w * dst_h * 3) return error.InvalidBufferSize;
+
+    for (0..dst_h) |y| {
+        for (0..dst_w) |x| {
+            const src_x = @min(src_w - 1, x0 + x);
+            const src_y = @min(src_h - 1, y0 + y);
+
+            const src_idx = ((src_w * src_y) + src_x) * 3;
+            const dst_idx = ((dst_w * y) + x) * 3;
+
+            dst_rgb[dst_idx..][0..3].* = src_rgb[src_idx..][0..3].*;
+        }
+    }
+}
+
 fn checkStatus(api: *const ort.OrtApi, status: ?*ort.OrtStatus) !void {
     if (status) |st| {
         const msg = api.*.GetErrorMessage.?(st);

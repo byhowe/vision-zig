@@ -67,13 +67,18 @@ pub fn main(init: std.process.Init) !void {
     var real_fps: f32 = 0.0;
     var top: Yolo.Prediction = .{};
 
+    const big_buffer = try arena.alloc(u8, texture_size);
+    @memset(big_buffer, 0); // Initialize to black
+
     while (!rl.windowShouldClose()) {
         _ = try std.posix.poll(&pfds, 0);
 
         if ((pfds[0].revents & std.posix.POLL.IN) != 0) {
             const jpeg_buffer = try video.dequeueBuffer();
-            try pixels.jpegToRgb(jpeg_buffer, rgb_buffer, WIDTH, HEIGHT);
+            try pixels.jpegToRgb(jpeg_buffer, big_buffer, WIDTH, HEIGHT);
             try video.queueBuffer(jpeg_buffer); // return to kernel immediately, probably not a huge deal
+
+            try Yolo.cropRgbFrame(big_buffer, WIDTH, HEIGHT, rgb_buffer, WIDTH, HEIGHT, 320, 240);
 
             // calculate real fps obtained by the frame arrival times
             const new_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
