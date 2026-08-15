@@ -240,28 +240,6 @@ fn preprocessYolo(rgb: []const u8, tensor: []f32, src_w: usize, src_h: usize, ds
     }
 }
 
-// Copies the source RGB array into the destination array, cropping the frame to fit.
-// The caller must ensure that the destination is memset to 0.
-pub fn cropRgbFrame(src_rgb: []const u8, src_w: usize, src_h: usize, dst_rgb: []u8, dst_w: usize, dst_h: usize, x0: usize, y0: usize) !void {
-    if (src_rgb.len != src_w * src_h * 3) return error.InvalidBufferSize;
-    if (dst_rgb.len != dst_w * dst_h * 3) return error.InvalidBufferSize;
-
-    // completely outside the src image.
-    if (x0 >= src_w or y0 >= src_h) return;
-
-    const copy_w = @min(dst_w, src_w - x0);
-    const copy_h = @min(dst_h, src_h - y0);
-
-    for (0..copy_h) |y| {
-        const src_y = y0 + y;
-
-        const src_idx = ((src_w * src_y) + x0) * 3;
-        const dst_idx = (dst_w * y) * 3;
-
-        @memcpy(dst_rgb[dst_idx .. dst_idx + copy_w * 3], src_rgb[src_idx .. src_idx + copy_w * 3]);
-    }
-}
-
 fn checkStatus(api: *const ort.OrtApi, status: ?*ort.OrtStatus) !void {
     if (status) |st| {
         const msg = api.*.GetErrorMessage.?(st);

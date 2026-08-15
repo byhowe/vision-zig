@@ -78,7 +78,7 @@ pub fn main(init: std.process.Init) !void {
             try pixels.jpegToRgb(jpeg_buffer, big_buffer, WIDTH, HEIGHT);
             try video.queueBuffer(jpeg_buffer); // return to kernel immediately, probably not a huge deal
 
-            try Yolo.cropRgbFrame(big_buffer, WIDTH, HEIGHT, rgb_buffer, WIDTH, HEIGHT, 320, 240);
+            try pixels.cropRgbFrame(big_buffer, WIDTH, HEIGHT, rgb_buffer, WIDTH, HEIGHT, 320, 240);
 
             // calculate real fps obtained by the frame arrival times
             const new_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
