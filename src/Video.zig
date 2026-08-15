@@ -40,8 +40,7 @@ pub fn setFormat(self: *Self, width: usize, height: usize) !void {
     fmt.type = vl.V4L2_BUF_TYPE_VIDEO_CAPTURE;
     fmt.fmt.pix.width = @intCast(width);
     fmt.fmt.pix.height = @intCast(height);
-    // FIXME: currently hard coding the pixel format. take it from the user.
-    fmt.fmt.pix.pixelformat = vl.V4L2_PIX_FMT_YUYV;
+    fmt.fmt.pix.pixelformat = vl.V4L2_PIX_FMT_MJPEG; // FIXME: currently hard coding the pixel format. take it from the user.
     fmt.fmt.pix.field = vl.V4L2_FIELD_NONE;
     try ioctl(self.fd, vl.VIDIOC_S_FMT, @intFromPtr(&fmt));
 

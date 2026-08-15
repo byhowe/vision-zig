@@ -72,6 +72,8 @@ pub fn main(init: std.process.Init) !void {
         if ((pfds[0].revents & std.posix.POLL.IN) != 0) {
             const frame_buffer = try video.dequeueBuffer();
 
+            try pixels.jpegToRgb(frame_buffer, texture_data, WIDTH, HEIGHT);
+
             const new_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
             const time_elapsed = new_frame_timestamp - last_frame_timestmap;
             last_frame_timestmap = new_frame_timestamp;
@@ -80,7 +82,8 @@ pub fn main(init: std.process.Init) !void {
             // It fluctuates between 15 fps and 30 fps.
             const fps_estimated = @as(f32, @floatFromInt(std.time.ns_per_s)) / @as(f32, @floatFromInt(time_elapsed));
 
-            try pixels.yuyvToRgb(video.buffers[idx], @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
+            // TODO: we may have a setting where we use yuyv or mjpeg. so keep this around for now.
+            // try pixels.yuyvToRgb(frame_buffer, @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
             rl.updateTexture(texture, @ptrCast(texture_data.ptr));
 
             try video.queueBuffer(frame_buffer);

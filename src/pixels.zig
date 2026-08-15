@@ -64,9 +64,9 @@ pub fn jpegToRgb(
     expected_w: usize,
     expected_h: usize,
 ) JpegError!void {
-    var width = 0;
-    var height = 0;
-    var channels_in_file = 0;
+    var width: c_int = 0;
+    var height: c_int = 0;
+    var channels_in_file: c_int = 0;
     const desired_channels = 3;
 
     const decoded_ptr = stb.stbi_load_from_memory(
@@ -81,11 +81,10 @@ pub fn jpegToRgb(
 
     const w: usize = @intCast(width);
     const h: usize = @intCast(height);
+    const total_bytes = w * h * desired_channels;
 
     if (w != expected_w or h != expected_h) return error.DimensionMismatch;
-
-    const total_bytes = w * h * desired_channels;
     if (rgb.len < total_bytes) return error.BufferTooSmall;
 
-    @memcpy(rgb[0..total_bytes], decoded_ptr.?[0..total_bytes]);
+    @memcpy(rgb[0..total_bytes], decoded_ptr[0..total_bytes]);
 }
