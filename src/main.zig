@@ -31,10 +31,11 @@ pub fn main(init: std.process.Init) !void {
     defer rl.closeWindow();
 
     const texture_size = WIDTH * HEIGHT * 3;
-    const texture_data = try arena.alloc(u8, texture_size);
-    @memset(texture_data, 0); // Initialize to black
+    const rgb_buffer = try arena.alloc(u8, texture_size);
+    @memset(rgb_buffer, 0); // Initialize to black
+
     const texture_image = rl.Image{
-        .data = @ptrCast(texture_data.ptr),
+        .data = @ptrCast(rgb_buffer.ptr),
         .width = WIDTH,
         .height = HEIGHT,
         .mipmaps = 1,
@@ -63,41 +64,40 @@ pub fn main(init: std.process.Init) !void {
 
     // track the actual frame time
     var last_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
-
+    var real_fps: f32 = 0.0;
     var top: Yolo.Prediction = .{};
 
     while (!rl.windowShouldClose()) {
         _ = try std.posix.poll(&pfds, 0);
 
         if ((pfds[0].revents & std.posix.POLL.IN) != 0) {
-            const frame_buffer = try video.dequeueBuffer();
+            const jpeg_buffer = try video.dequeueBuffer();
+            try pixels.jpegToRgb(jpeg_buffer, rgb_buffer, WIDTH, HEIGHT);
+            try video.queueBuffer(jpeg_buffer); // return to kernel immediately, probably not a huge deal
 
-            try pixels.jpegToRgb(frame_buffer, texture_data, WIDTH, HEIGHT);
-
+            // calculate real fps obtained by the frame arrival times
             const new_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
             const time_elapsed = new_frame_timestamp - last_frame_timestamp;
             last_frame_timestamp = new_frame_timestamp;
-
+            real_fps = @as(f32, @floatFromInt(std.time.ns_per_s)) / @as(f32, @floatFromInt(time_elapsed));
             // NOTE: Interesting. the fps is much more erradic when the webcam privacy is on.
             // It fluctuates between 15 fps and 30 fps.
-            const fps_estimated = @as(f32, @floatFromInt(std.time.ns_per_s)) / @as(f32, @floatFromInt(time_elapsed));
 
             // TODO: we may have a setting where we use yuyv or mjpeg. so keep this around for now.
             // try pixels.yuyvToRgb(frame_buffer, @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
-            rl.updateTexture(texture, @ptrCast(texture_data.ptr));
+            rl.updateTexture(texture, @ptrCast(rgb_buffer.ptr));
 
-            try video.queueBuffer(frame_buffer);
-
-            top = try model.infer(texture_data, WIDTH, HEIGHT);
-
-            std.debug.print("fps = {d:.2} | {s} confidence = {d:.2}\n", .{ fps_estimated, Yolo.model_labels[top.class_id], top.score });
+            top = try model.infer(rgb_buffer, WIDTH, HEIGHT);
         }
 
         rl.beginDrawing();
         rl.clearBackground(rl.Color.black);
 
         rl.drawTexture(texture, 0, 0, rl.Color.white);
-        rl.drawFPS(10, 10);
+
+        var fps_text_buffer: [64]u8 = undefined;
+        const fps_text = std.fmt.bufPrintZ(&fps_text_buffer, "FPS: {d:.2}", .{real_fps}) catch "error";
+        rl.drawText(fps_text, 10, 10, 20, rl.Color.lime);
 
         // confidence threshold = 0.35
         if (top.score > 0.35) {
