@@ -12,6 +12,13 @@ const DEVICE = "/dev/video0";
 const WIDTH = 1280;
 const HEIGHT = 720;
 
+const CONFIDENCE_THRESHOLD = 0.35;
+
+const YOLO_W_F32: f32 = @floatFromInt(Yolo.WIDTH);
+const YOLO_H_F32: f32 = @floatFromInt(Yolo.HEIGHT);
+const HALF_YOLO_W: f32 = YOLO_W_F32 / 2.0;
+const HALF_YOLO_H: f32 = YOLO_H_F32 / 2.0;
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -74,7 +81,10 @@ pub fn main(init: std.process.Init) !void {
     @memset(rgb_cropped, 0); // Initialize to black
 
     var ema = EMA.init(io);
-    var center: [2]f32 = undefined;
+    var center: [2]f32 = .{
+        @as(f32, @floatFromInt(WIDTH)) / 2.0,
+        @as(f32, @floatFromInt(HEIGHT)) / 2.0,
+    };
 
     while (!rl.windowShouldClose()) {
         _ = try std.posix.poll(&pfds, 0);
@@ -105,44 +115,39 @@ pub fn main(init: std.process.Init) !void {
                 rgb_cropped,
                 Yolo.WIDTH,
                 Yolo.HEIGHT,
-                @intFromFloat(center[0] - @as(f32, @floatFromInt(Yolo.WIDTH)) / 2.0),
-                @intFromFloat(center[1] - @as(f32, @floatFromInt(Yolo.HEIGHT)) / 2.0),
+                @intFromFloat(center[0] - HALF_YOLO_W),
+                @intFromFloat(center[1] - HALF_YOLO_H),
             );
 
             top = try model.infer(rgb_cropped, Yolo.WIDTH, Yolo.HEIGHT);
 
-            const crop_start_x = center[0] - @as(f32, @floatFromInt(Yolo.WIDTH)) / 2.0;
-            const crop_start_y = center[1] - @as(f32, @floatFromInt(Yolo.HEIGHT)) / 2.0;
-
-            const absolute_cx = crop_start_x + top.cx;
-            const absolute_cy = crop_start_y + top.cy;
-
-            ema.update(top.score > 0.35, absolute_cx, absolute_cy);
+            ema.update(
+                top.score > CONFIDENCE_THRESHOLD,
+                center[0] - HALF_YOLO_W + top.cx,
+                center[1] - HALF_YOLO_H + top.cy,
+            );
         }
 
         rl.beginDrawing();
-        rl.clearBackground(rl.Color.black);
+        defer rl.endDrawing();
 
+        rl.clearBackground(rl.Color.black);
         rl.drawTexture(texture, 0, 0, rl.Color.white);
 
         var fps_text_buffer: [64]u8 = undefined;
-        const fps_text = std.fmt.bufPrintZ(&fps_text_buffer, "FPS: {d:.2}", .{real_fps}) catch "error";
+        const fps_text = std.fmt.bufPrintZ(&fps_text_buffer, "FPS: {d:.2}", .{real_fps}) catch unreachable;
         rl.drawText(fps_text, 10, 10, 20, rl.Color.lime);
 
-        // confidence threshold = 0.35
-        if (top.score > 0.35) {
+        if (top.score > CONFIDENCE_THRESHOLD) {
             // convert yolo [cx, cy, w, h] into raylib [x, y, w, h]
             const box_w = top.w;
             const box_h = top.h;
             const box_x = top.cx - (box_w / 2.0);
             const box_y = top.cy - (box_h / 2.0);
 
-            const crop_start_x = center[0] - @as(f32, @floatFromInt(Yolo.WIDTH)) / 2.0;
-            const crop_start_y = center[1] - @as(f32, @floatFromInt(Yolo.HEIGHT)) / 2.0;
-
             const rect = rl.Rectangle{
-                .x = box_x + crop_start_x,
-                .y = box_y + crop_start_y,
+                .x = box_x + center[0] - HALF_YOLO_W,
+                .y = box_y + center[1] - HALF_YOLO_H,
                 .width = box_w,
                 .height = box_h,
             };
@@ -150,7 +155,7 @@ pub fn main(init: std.process.Init) !void {
             rl.drawRectangleLinesEx(rect, 3.0, rl.Color.lime);
 
             var label_buffer: [64]u8 = undefined;
-            const label_text = std.fmt.bufPrintZ(&label_buffer, "{s}: {d:.2}%", .{ Yolo.model_labels[top.class_id], top.score * 100.0 }) catch "error";
+            const label_text = std.fmt.bufPrintZ(&label_buffer, "{s}: {d:.2}%", .{ Yolo.model_labels[top.class_id], top.score * 100.0 }) catch unreachable;
 
             // draw background for the text
             const text_size = 20;
@@ -175,15 +180,13 @@ pub fn main(init: std.process.Init) !void {
 
             // draw rectangle of where the model is seeing.
             rl.drawRectangleLines(
-                @intFromFloat(center[0] - @as(f32, @floatFromInt(Yolo.WIDTH)) / 2.0),
-                @intFromFloat(center[1] - @as(f32, @floatFromInt(Yolo.HEIGHT)) / 2.0),
+                @intFromFloat(center[0] - HALF_YOLO_W),
+                @intFromFloat(center[1] - HALF_YOLO_H),
                 Yolo.WIDTH,
                 Yolo.HEIGHT,
                 rl.Color.dark_gray,
             );
         }
-
-        rl.endDrawing();
     }
 }
 
@@ -225,12 +228,9 @@ const EMA = struct {
         const cx = self.ema_x + zx * self.sigma;
         const cy = self.ema_y + zy * self.sigma;
 
-        const mid_w = @as(f32, @floatFromInt(Yolo.WIDTH)) / 2.0;
-        const mid_h = @as(f32, @floatFromInt(Yolo.HEIGHT)) / 2.0;
-
         return .{
-            std.math.clamp(cx, mid_w, @as(f32, @floatFromInt(WIDTH)) - mid_w),
-            std.math.clamp(cy, mid_h, @as(f32, @floatFromInt(HEIGHT)) - mid_h),
+            std.math.clamp(cx, HALF_YOLO_W, @as(f32, @floatFromInt(WIDTH)) - HALF_YOLO_W),
+            std.math.clamp(cy, HALF_YOLO_H, @as(f32, @floatFromInt(HEIGHT)) - HALF_YOLO_H),
         };
     }
 
