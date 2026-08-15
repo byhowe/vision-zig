@@ -6,33 +6,11 @@ const rl = @import("raylib");
 const pixels = @import("pixels.zig");
 
 const Video = @import("Video.zig");
+const Yolo = @import("Yolo.zig");
 
 const DEVICE = "/dev/video0";
 const WIDTH = 640;
 const HEIGHT = 480;
-
-const YOLO_WIDTH = 640;
-const YOLO_HEIGHT = 640;
-
-const model_data: []const u8 = @embedFile("yolov8m.onnx");
-// in 0: name='images', shape={ 1, 3, 640, 640 }
-// out 0: name='output0', shape={ 1, 84, 8400 }
-
-const model_labels = block: {
-    @setEvalBranchQuota(100_000);
-
-    const text = @embedFile("labels.txt");
-
-    var it = std.mem.tokenizeAny(u8, text, "\r\n");
-    var count = 0;
-    while (it.next()) |_| count += 1;
-
-    var arr: [count][]const u8 = undefined;
-    it = std.mem.tokenizeAny(u8, text, "\r\n");
-    for (&arr) |*item| item.* = it.next().?;
-
-    break :block arr;
-};
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -40,60 +18,7 @@ pub fn main(init: std.process.Init) !void {
 
     // ONNX
 
-    const api_base = ort.OrtGetApiBase().?;
-    const version = api_base.*.GetVersionString.?();
-    std.debug.print("onnx api version = {s}\n", .{version});
-
-    const api = api_base.*.GetApi.?(ort.ORT_API_VERSION);
-
-    var env: ?*ort.OrtEnv = null;
-    try checkStatus(api, api.*.CreateEnv.?(ort.ORT_LOGGING_LEVEL_WARNING, "YOLO", &env));
-    defer api.*.ReleaseEnv.?(env);
-
-    var session_options: ?*ort.OrtSessionOptions = null;
-    try checkStatus(api, api.*.CreateSessionOptions.?(&session_options));
-    defer api.*.ReleaseSessionOptions.?(session_options);
-
-    // prevent cpu from drawing 200 watts. it draw 140 now :(.
-    try checkStatus(api, api.*.SetSessionGraphOptimizationLevel.?(session_options, ort.ORT_ENABLE_ALL));
-    // don't hammer all the cores.
-    try checkStatus(api, api.*.SetIntraOpNumThreads.?(session_options, 4));
-
-    // enable cuda so we can still use the computer
-    var cuda_options: ?*ort.OrtCUDAProviderOptionsV2 = null;
-    try checkStatus(api, api.*.CreateCUDAProviderOptions.?(&cuda_options));
-    defer api.*.ReleaseCUDAProviderOptions.?(cuda_options);
-
-    try checkStatus(api, api.*.SessionOptionsAppendExecutionProvider_CUDA_V2.?(session_options, cuda_options));
-
-    // create session from the model data
-    var session: ?*ort.OrtSession = null;
-    try checkStatus(api, api.*.CreateSessionFromArray.?(
-        env,
-        model_data.ptr,
-        model_data.len,
-        session_options,
-        &session,
-    ));
-    defer api.*.ReleaseSession.?(session);
-
-    var allocator: ?*ort.OrtAllocator = null;
-    try checkStatus(api, api.*.GetAllocatorWithDefaultOptions.?(&allocator));
-
-    // setup memory and buffers
-
-    var memory_info: ?*ort.OrtMemoryInfo = null;
-    try checkStatus(api, api.*.CreateCpuMemoryInfo.?(
-        ort.OrtArenaAllocator,
-        ort.OrtMemTypeDefault,
-        &memory_info,
-    ));
-    defer api.*.ReleaseMemoryInfo.?(memory_info);
-
-    // arena allocate buffer for the input tensor. we already know the size from the previous debug prints.
-    const input_tensor_len = 1 * 3 * YOLO_HEIGHT * YOLO_WIDTH;
-    const input_tensor_data = try arena.alloc(f32, input_tensor_len);
-    var input_shape = [_]i64{ 1, 3, YOLO_HEIGHT, YOLO_WIDTH };
+    var model = try Yolo.init(arena);
 
     // RAYLIB
 
@@ -140,7 +65,7 @@ pub fn main(init: std.process.Init) !void {
     // track the actual frame time
     var last_frame_timestmap = std.Io.Clock.awake.now(io).nanoseconds;
 
-    var top: Prediction = .{};
+    var top: Yolo.Prediction = .{};
 
     while (!rl.windowShouldClose()) {
         _ = try std.posix.poll(&pfds, 0);
@@ -161,54 +86,9 @@ pub fn main(init: std.process.Init) !void {
 
             try video.queueBuffer(idx);
 
-            preprocessYolo(
-                texture_data[0..texture_size],
-                input_tensor_data,
-                WIDTH,
-                HEIGHT,
-                YOLO_WIDTH,
-                YOLO_HEIGHT,
-            );
+            top = try model.infer(texture_data, WIDTH, HEIGHT);
 
-            // FIXME: the documentation says we need to free these with the allocator. how do we do that?
-            var input_name: ?[*]u8 = null;
-            try checkStatus(api, api.*.SessionGetInputName.?(session, 0, allocator, &input_name));
-
-            var output_name: ?[*]u8 = null;
-            try checkStatus(api, api.*.SessionGetOutputName.?(session, 0, allocator, &output_name));
-
-            // TODO: do we need to create this tensor every time? can we do it once outside the loop and fill the data every frame? experiment...
-            var input_tensor: ?*ort.OrtValue = null;
-            try checkStatus(api, api.*.CreateTensorWithDataAsOrtValue.?(
-                memory_info,
-                @ptrCast(input_tensor_data.ptr),
-                input_tensor_data.len * @sizeOf(f32),
-                @ptrCast(&input_shape[0]),
-                input_shape.len,
-                ort.ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-                &input_tensor,
-            ));
-            defer api.*.ReleaseValue.?(input_tensor);
-
-            var output_tensor: ?*ort.OrtValue = null;
-            try checkStatus(api, api.*.Run.?(
-                session,
-                null, // run_options
-                &input_name,
-                &input_tensor,
-                1,
-                &output_name,
-                1,
-                &output_tensor,
-            ));
-            defer api.*.ReleaseValue.?(output_tensor);
-
-            var out_ptr: [*c]f32 = null;
-            try checkStatus(api, api.*.GetTensorMutableData.?(output_tensor, @ptrCast(&out_ptr)));
-
-            top = getTopPrediction(out_ptr, 8400);
-
-            std.debug.print("fps = {d:.2} | {s}\n", .{ fps_estimated, model_labels[top.class_id] });
+            std.debug.print("fps = {d:.2} | {s} confidence = {d:.0}\n", .{ fps_estimated, Yolo.model_labels[top.class_id], top.score });
         }
 
         rl.beginDrawing();
@@ -235,7 +115,7 @@ pub fn main(init: std.process.Init) !void {
             rl.drawRectangleLinesEx(rect, 3.0, rl.Color.lime);
 
             var label_buffer: [64]u8 = undefined;
-            const label_text = std.fmt.bufPrintZ(&label_buffer, "{s}: {d:.2}%", .{ model_labels[top.class_id], top.score * 100.0 }) catch "error";
+            const label_text = std.fmt.bufPrintZ(&label_buffer, "{s}: {d:.2}%", .{ Yolo.model_labels[top.class_id], top.score * 100.0 }) catch "error";
 
             // draw background for the text
             const text_size = 20;
@@ -260,100 +140,5 @@ pub fn main(init: std.process.Init) !void {
         }
 
         rl.endDrawing();
-    }
-}
-
-const Prediction = struct {
-    class_id: usize = 0,
-    score: f32 = 0.0,
-
-    cx: f32 = 0.0,
-    cy: f32 = 0.0,
-    w: f32 = 0.0,
-    h: f32 = 0.0,
-};
-
-fn getTopPrediction(out_ptr: [*c]f32, num_anchors: usize) Prediction {
-    var max_score: f32 = 0.0;
-    var best_class: usize = 0;
-    var best_anchor: usize = 0;
-
-    // NOTE: 0..3 are box coords. 4..83 are classes..
-
-    // find the anchor index with the highest score
-    for (4..84) |label_idx| {
-        for (0..num_anchors) |anchor_idx| {
-            // the layout of the tensor is weird. we have a 80 contigous blocks of size 8400.
-            // | 8400 | 8400 | ... 80 times ... | 8400 |
-            const flat_idx = (label_idx * num_anchors) + anchor_idx;
-            const score = out_ptr[flat_idx];
-
-            if (score > max_score) {
-                max_score = score;
-                best_class = label_idx - 4;
-                best_anchor = anchor_idx;
-            }
-        }
-    }
-
-    // extract the bounding box for the anchor with the highest scored label
-    // [cx, cy, w, h]
-    const cx_raw = out_ptr[(0 * num_anchors) + best_anchor];
-    const cy_raw = out_ptr[(1 * num_anchors) + best_anchor];
-    const w_raw = out_ptr[(2 * num_anchors) + best_anchor];
-    const h_raw = out_ptr[(3 * num_anchors) + best_anchor];
-
-    return .{
-        .class_id = best_class,
-        .score = max_score,
-        .cx = cx_raw,
-        .cy = cy_raw,
-        .w = w_raw,
-        .h = h_raw,
-    };
-}
-
-// Convert an RGB frame into CHW f32 normalized array with top-left letterboxing
-fn preprocessYolo(rgb: []const u8, tensor: []f32, src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) void {
-    // set all pixels to black initially.
-    @memset(tensor, 0.0);
-    const channel_stride = dst_w * dst_h;
-
-    const max_y = @min(src_h, dst_h);
-    const max_x = @min(src_w, dst_w);
-
-    const r_offset = 0;
-    const g_offset = channel_stride;
-    const b_offset = channel_stride * 2;
-
-    const scale: f32 = 1.0 / 255.0;
-
-    var src_row_start: usize = 0;
-    var dst_row_start: usize = 0;
-
-    for (0..max_y) |_| {
-        var src_idx = src_row_start;
-        var dst_idx = dst_row_start;
-
-        for (0..max_x) |_| {
-            tensor[r_offset + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 0])) * scale;
-            tensor[g_offset + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 1])) * scale;
-            tensor[b_offset + dst_idx] = @as(f32, @floatFromInt(rgb[src_idx + 2])) * scale;
-
-            src_idx += 3;
-            dst_idx += 1;
-        }
-
-        src_row_start += src_w * 3;
-        dst_row_start += dst_w;
-    }
-}
-
-fn checkStatus(api: *const ort.OrtApi, status: ?*ort.OrtStatus) !void {
-    if (status) |st| {
-        const msg = api.*.GetErrorMessage.?(st);
-        std.debug.print("ort error: {s}\n", .{msg});
-        api.*.ReleaseStatus.?(st);
-        return error.OrtError;
     }
 }
