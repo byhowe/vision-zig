@@ -14,9 +14,17 @@ pub fn init(path: []const u8) !Self {
     const fd = try std.posix.openat(
         std.posix.AT.FDCWD,
         path,
-        .{ .ACCMODE = .RDWR, .CLOEXEC = true },
+        .{ .ACCMODE = .RDWR, .NONBLOCK = true, .CLOEXEC = true },
         0,
     );
+    errdefer std.Io.Threaded.closeFd(fd);
+
+    // query capabilities to make sure cam supports video capture and streaming
+    var cap = std.mem.zeroes(vl.v4l2_capability);
+    try ioctl(fd, vl.VIDIOC_QUERYCAP, @intFromPtr(&cap));
+
+    if (0 == (cap.capabilities & vl.V4L2_CAP_VIDEO_CAPTURE)) return error.CapVideoCapture;
+    if (0 == (cap.capabilities & vl.V4L2_CAP_STREAMING)) return error.CapStreaming;
 
     return .{
         .fd = fd,
