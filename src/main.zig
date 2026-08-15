@@ -67,8 +67,14 @@ pub fn main(init: std.process.Init) !void {
     var real_fps: f32 = 0.0;
     var top: Yolo.Prediction = .{};
 
+    // TODO: optimization: instead of filling a cropped version every frame, feed the infer
+    // function with the uncropped version and let it fill its internal f32 buffer with the
+    // cropped version directly. this is currently just an intermediary buffer.
     const rgb_cropped = try arena.alloc(u8, Yolo.WIDTH * Yolo.HEIGHT * 3);
     @memset(rgb_cropped, 0); // Initialize to black
+
+    var ema = EMA.init(io);
+    var center: [2]f32 = undefined;
 
     while (!rl.windowShouldClose()) {
         _ = try std.posix.poll(&pfds, 0);
@@ -82,18 +88,6 @@ pub fn main(init: std.process.Init) !void {
             // try pixels.yuyvToRgb(frame_buffer, @as([*]u8, texture_data.ptr)[0..texture_size], WIDTH, HEIGHT);
             rl.updateTexture(texture, @ptrCast(texture_data.ptr));
 
-            try pixels.cropRgbFrame(
-                texture_data,
-                WIDTH,
-                HEIGHT,
-                rgb_cropped,
-                Yolo.WIDTH,
-                Yolo.HEIGHT,
-                // middle of the frame
-                320,
-                40,
-            );
-
             // calculate real fps obtained by the frame arrival times
             const new_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
             const time_elapsed = new_frame_timestamp - last_frame_timestamp;
@@ -102,7 +96,28 @@ pub fn main(init: std.process.Init) !void {
             // NOTE: Interesting. the fps is much more erradic when the webcam privacy is on.
             // It fluctuates between 15 fps and 30 fps.
 
+            center = ema.center();
+
+            try pixels.cropRgbFrame(
+                texture_data,
+                WIDTH,
+                HEIGHT,
+                rgb_cropped,
+                Yolo.WIDTH,
+                Yolo.HEIGHT,
+                @intFromFloat(center[0] - @as(f32, @floatFromInt(Yolo.WIDTH)) / 2.0),
+                @intFromFloat(center[1] - @as(f32, @floatFromInt(Yolo.HEIGHT)) / 2.0),
+            );
+
             top = try model.infer(rgb_cropped, Yolo.WIDTH, Yolo.HEIGHT);
+
+            const crop_start_x = center[0] - @as(f32, @floatFromInt(Yolo.WIDTH)) / 2.0;
+            const crop_start_y = center[1] - @as(f32, @floatFromInt(Yolo.HEIGHT)) / 2.0;
+
+            const absolute_cx = crop_start_x + top.cx;
+            const absolute_cy = crop_start_y + top.cy;
+
+            ema.update(top.score > 0.35, absolute_cx, absolute_cy);
         }
 
         rl.beginDrawing();
@@ -122,9 +137,12 @@ pub fn main(init: std.process.Init) !void {
             const box_x = top.cx - (box_w / 2.0);
             const box_y = top.cy - (box_h / 2.0);
 
+            const crop_start_x = center[0] - @as(f32, @floatFromInt(Yolo.WIDTH)) / 2.0;
+            const crop_start_y = center[1] - @as(f32, @floatFromInt(Yolo.HEIGHT)) / 2.0;
+
             const rect = rl.Rectangle{
-                .x = box_x + 320.0,
-                .y = box_y + 40.0,
+                .x = box_x + crop_start_x,
+                .y = box_y + crop_start_y,
                 .width = box_w,
                 .height = box_h,
             };
@@ -154,8 +172,75 @@ pub fn main(init: std.process.Init) !void {
                 text_size,
                 rl.Color.black,
             );
+
+            // draw rectangle of where the model is seeing.
+            rl.drawRectangleLines(
+                @intFromFloat(center[0] - @as(f32, @floatFromInt(Yolo.WIDTH)) / 2.0),
+                @intFromFloat(center[1] - @as(f32, @floatFromInt(Yolo.HEIGHT)) / 2.0),
+                Yolo.WIDTH,
+                Yolo.HEIGHT,
+                rl.Color.dark_gray,
+            );
         }
 
         rl.endDrawing();
     }
 }
+
+const EMA = struct {
+    const Self = @This();
+
+    ema_x: f32,
+    ema_y: f32,
+    sigma: f32,
+
+    prng: std.Random.DefaultPrng,
+
+    // tuning
+    const alpha: f32 = 0.2; // how fast EMA follow the target
+    const sigma_min: f32 = 1.0;
+    const sigma_max: f32 = 400.0;
+    const sigma_growth: f32 = 1.15;
+
+    pub fn init(io: std.Io) Self {
+        var seed: u64 = undefined;
+        io.random(std.mem.asBytes(&seed));
+
+        return .{
+            .ema_x = @as(f32, @floatFromInt(WIDTH)) / 2.0,
+            .ema_y = @as(f32, @floatFromInt(HEIGHT)) / 2.0,
+            .sigma = sigma_max,
+            .prng = .init(seed),
+        };
+    }
+
+    // Returns the mid position of the EMA as f32
+    pub fn center(self: *Self) [2]f32 {
+        var rand = self.prng.random();
+
+        // generate 2d standard normal random variables
+        const zx = rand.floatNorm(f32);
+        const zy = rand.floatNorm(f32);
+
+        const cx = self.ema_x + zx * self.sigma;
+        const cy = self.ema_y + zy * self.sigma;
+
+        const mid_w = @as(f32, @floatFromInt(Yolo.WIDTH)) / 2.0;
+        const mid_h = @as(f32, @floatFromInt(Yolo.HEIGHT)) / 2.0;
+
+        return .{
+            std.math.clamp(cx, mid_w, @as(f32, @floatFromInt(WIDTH)) - mid_w),
+            std.math.clamp(cy, mid_h, @as(f32, @floatFromInt(HEIGHT)) - mid_h),
+        };
+    }
+
+    pub fn update(self: *Self, detected: bool, target_x: f32, target_y: f32) void {
+        if (detected) {
+            self.ema_x = (alpha * target_x) + ((1.0 - alpha) * self.ema_x);
+            self.ema_y = (alpha * target_y) + ((1.0 - alpha) * self.ema_y);
+            self.sigma = sigma_min; // TODO: work on making the reduction smooth as well.
+        } else {
+            self.sigma = @min(sigma_max, self.sigma * sigma_growth);
+        }
+    }
+};
