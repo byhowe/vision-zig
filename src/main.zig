@@ -163,9 +163,7 @@ pub fn main(init: std.process.Init) !void {
         rl.clearBackground(rl.Color.black);
         rl.drawTexture(texture, 0, 0, rl.Color.white);
 
-        var fps_text_buffer: [64]u8 = undefined;
-        const fps_text = std.fmt.bufPrintZ(&fps_text_buffer, "FPS: {d:.2}", .{fps.instant_fps}) catch unreachable;
-        rl.drawText(fps_text, 10, 10, 20, rl.Color.lime);
+        drawFpsCounter(fps.instant_fps);
 
         // draw rectangle of where the model is seeing.
         rl.drawRectangleLines(
@@ -177,44 +175,7 @@ pub fn main(init: std.process.Init) !void {
         );
 
         if (top.score > CONFIDENCE_THRESHOLD) {
-            // convert yolo [cx, cy, w, h] into raylib [x, y, w, h]
-            const box_w = top.w;
-            const box_h = top.h;
-            const box_x = top.cx - (box_w / 2.0);
-            const box_y = top.cy - (box_h / 2.0);
-
-            const rect = rl.Rectangle{
-                .x = box_x + result_center[0] - HALF_YOLO_W,
-                .y = box_y + result_center[1] - HALF_YOLO_H,
-                .width = box_w,
-                .height = box_h,
-            };
-
-            rl.drawRectangleLinesEx(rect, 3.0, rl.Color.lime);
-
-            var label_buffer: [64]u8 = undefined;
-            const label_text = std.fmt.bufPrintZ(&label_buffer, "{s}: {d:.2}%", .{ Yolo.model_labels[top.class_id], top.score * 100.0 }) catch unreachable;
-
-            // draw background for the text
-            const text_size = 20;
-            const text_width = rl.measureText(label_text, text_size);
-
-            rl.drawRectangle(
-                @intFromFloat(rect.x),
-                @as(i32, @intFromFloat(rect.y)) - text_size,
-                text_width + 10,
-                text_size,
-                rl.Color.lime,
-            );
-
-            // draw label
-            rl.drawText(
-                label_text,
-                @intFromFloat(rect.x + 5),
-                @as(i32, @intFromFloat(rect.y)) - text_size,
-                text_size,
-                rl.Color.black,
-            );
+            drawBoundingBox(top, result_center);
         }
     }
 }
@@ -311,3 +272,51 @@ const FpsTracker = struct {
         self.instant_fps = 1.0 / dt;
     }
 };
+
+fn drawFpsCounter(fps: f32) void {
+    var fps_text_buffer: [64]u8 = undefined;
+    const fps_text = std.fmt.bufPrintZ(&fps_text_buffer, "FPS: {d:.2}", .{fps}) catch unreachable;
+    rl.drawText(fps_text, 10, 10, 20, rl.Color.lime);
+}
+
+fn drawBoundingBox(pred: Yolo.Prediction, result_center: [2]f32) void {
+    // convert yolo [cx, cy, w, h] into raylib [x, y, w, h]
+    const box_x = pred.cx - (pred.w / 2.0);
+    const box_y = pred.cy - (pred.h / 2.0);
+
+    const rect = rl.Rectangle{
+        .x = box_x + result_center[0] - HALF_YOLO_W,
+        .y = box_y + result_center[1] - HALF_YOLO_H,
+        .width = pred.w,
+        .height = pred.h,
+    };
+
+    rl.drawRectangleLinesEx(rect, 3.0, rl.Color.lime);
+
+    var label_buffer: [64]u8 = undefined;
+    const label_text = std.fmt.bufPrintZ(&label_buffer, "{s}: {d:.2}%", .{
+        Yolo.model_labels[pred.class_id],
+        pred.score * 100.0,
+    }) catch unreachable;
+
+    // draw background for the text
+    const text_size = 20;
+    const text_width = rl.measureText(label_text, text_size);
+
+    rl.drawRectangle(
+        @intFromFloat(rect.x),
+        @as(i32, @intFromFloat(rect.y)) - text_size,
+        text_width + 10,
+        text_size,
+        rl.Color.lime,
+    );
+
+    // draw label
+    rl.drawText(
+        label_text,
+        @intFromFloat(rect.x + 5),
+        @as(i32, @intFromFloat(rect.y)) - text_size,
+        text_size,
+        rl.Color.black,
+    );
+}
