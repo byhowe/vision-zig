@@ -25,6 +25,18 @@ pub const WIDTH = 320;
 pub const HEIGHT = 320;
 pub const NUM_ANCHORS = if (WIDTH == 320) 2100 else 8400;
 
+const InferError = error{
+    AlreadyRunning,
+    NotRunning,
+};
+
+const State = enum(u8) {
+    idle,
+    running,
+    done,
+    failed,
+};
+
 const Self = @This();
 
 api: *const ort.OrtApi,
@@ -41,6 +53,9 @@ output_tensor: ?*ort.OrtValue = null,
 
 input_name: [*]const u8,
 output_name: [*]const u8,
+
+state: std.atomic.Value(State) = std.atomic.Value(State).init(.idle),
+run_status: ?*ort.OrtStatus = null,
 
 pub fn init(arena: std.mem.Allocator) !Self {
     const api_base = ort.OrtGetApiBase().?;
@@ -140,7 +155,10 @@ pub fn deinit(self: *Self) void {
     self.api.*.ReleaseEnv.?(self.env);
 }
 
-pub fn infer(self: *Self, rgb_frame: []const u8, src_w: usize, src_h: usize) !Prediction {
+pub fn startInfer(self: *Self, rgb_frame: []const u8, src_w: usize, src_h: usize) !void {
+    const prev = self.state.cmpxchgStrong(.idle, .running, .acq_rel, .acquire);
+    if (prev != null) return InferError.AlreadyRunning;
+
     preprocessYolo(
         rgb_frame,
         self.input_tensor_data,
@@ -150,7 +168,10 @@ pub fn infer(self: *Self, rgb_frame: []const u8, src_w: usize, src_h: usize) !Pr
         HEIGHT,
     );
 
-    try checkStatus(self.api, self.api.*.Run.?(
+    self.run_status = null;
+
+    errdefer self.state.store(.idle, .release);
+    try checkStatus(self.api, self.api.*.RunAsync.?(
         self.session,
         null, // run_options
         &self.input_name,
@@ -159,17 +180,51 @@ pub fn infer(self: *Self, rgb_frame: []const u8, src_w: usize, src_h: usize) !Pr
         &self.output_name,
         1,
         &self.output_tensor,
+        runAsyncCallback,
+        self,
     ));
-    defer {
-        self.api.*.ReleaseValue.?(self.output_tensor);
-        self.output_tensor = null;
-    }
+}
 
-    var out_ptr: [*c]f32 = null;
-    try checkStatus(self.api, self.api.*.GetTensorMutableData.?(self.output_tensor, @ptrCast(&out_ptr)));
+fn runAsyncCallback(
+    user_data: ?*anyopaque,
+    outputs: [*c]?*ort.OrtValue,
+    num_outputs: usize,
+    status: ?*ort.OrtStatus,
+) callconv(.c) void {
+    const self: *Self = @ptrCast(@alignCast(user_data.?));
 
-    const top = getTopPrediction(out_ptr, NUM_ANCHORS);
-    return top;
+    if (status == null and num_outputs > 0)
+        self.output_tensor = outputs[0];
+
+    self.run_status = status;
+
+    self.state.store(if (status == null) .done else .failed, .release);
+}
+
+// nonblocking. if the run is not finished yet, return null.
+pub fn pollResult(self: *Self) !?Prediction {
+    return switch (self.state.load(.acquire)) {
+        .idle => InferError.NotRunning,
+        .running => null,
+        .failed => {
+            const status = self.run_status;
+            self.run_status = null;
+            self.state.store(.idle, .release);
+            try checkStatus(self.api, status);
+            unreachable;
+        },
+        .done => blk: {
+            var out_ptr: [*c]f32 = null;
+            try checkStatus(self.api, self.api.*.GetTensorMutableData.?(self.output_tensor, @ptrCast(&out_ptr)));
+            const pred = getTopPrediction(out_ptr, NUM_ANCHORS);
+
+            self.api.*.ReleaseValue.?(self.output_tensor.?);
+            self.output_tensor = null;
+
+            self.state.store(.idle, .release);
+            break :blk pred;
+        },
+    };
 }
 
 pub const Prediction = struct {

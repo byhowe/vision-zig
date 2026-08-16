@@ -42,6 +42,7 @@ pub fn main(init: std.process.Init) !void {
     rl.setTargetFPS(120);
     defer rl.closeWindow();
 
+    // texture_data holds the image data we show on screen.
     const texture_size = WIDTH * HEIGHT * 3;
     const texture_data = try arena.alloc(u8, texture_size);
     @memset(texture_data, 0); // Initialize to black
@@ -83,7 +84,10 @@ pub fn main(init: std.process.Init) !void {
     var latest_detected: bool = false;
     var latest_target_x: f32 = HALF_W;
     var latest_target_y: f32 = HALF_H;
-    var inference_center: [2]f32 = .{ HALF_W, HALF_H };
+
+    var inference_running = false;
+    var result_center: [2]f32 = .{ HALF_W, HALF_H };
+    var pending_center: [2]f32 = .{ HALF_W, HALF_H };
 
     // TODO: optimization: instead of filling a cropped version every frame, feed the infer
     // function with the uncropped version and let it fill its internal f32 buffer with the
@@ -99,6 +103,20 @@ pub fn main(init: std.process.Init) !void {
         const dt_ns = current_timestamp - last_ema_timestamp;
         last_ema_timestamp = current_timestamp;
         const dt: f32 = @as(f32, @floatFromInt(dt_ns)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+
+        if (inference_running) {
+            if (try model.pollResult()) |pred| {
+                top = pred;
+                result_center = pending_center;
+                inference_running = false;
+
+                latest_detected = top.score > CONFIDENCE_THRESHOLD;
+                if (latest_detected) {
+                    latest_target_x = result_center[0] - HALF_YOLO_W + top.cx;
+                    latest_target_y = result_center[1] - HALF_YOLO_H + top.cy;
+                }
+            }
+        }
 
         _ = try std.posix.poll(&pfds, 0);
 
@@ -119,26 +137,22 @@ pub fn main(init: std.process.Init) !void {
             // NOTE: Interesting. the fps is much more erradic when the webcam privacy is on.
             // It fluctuates between 15 fps and 30 fps.
 
-            // save the center of the inference
-            inference_center = center;
+            if (!inference_running) {
+                pending_center = center;
 
-            try pixels.cropRgbFrame(
-                texture_data,
-                WIDTH,
-                HEIGHT,
-                rgb_cropped,
-                Yolo.WIDTH,
-                Yolo.HEIGHT,
-                @intFromFloat(inference_center[0] - HALF_YOLO_W),
-                @intFromFloat(inference_center[1] - HALF_YOLO_H),
-            );
+                try pixels.cropRgbFrame(
+                    texture_data,
+                    WIDTH,
+                    HEIGHT,
+                    rgb_cropped,
+                    Yolo.WIDTH,
+                    Yolo.HEIGHT,
+                    @intFromFloat(pending_center[0] - HALF_YOLO_W),
+                    @intFromFloat(pending_center[1] - HALF_YOLO_H),
+                );
 
-            top = try model.infer(rgb_cropped, Yolo.WIDTH, Yolo.HEIGHT);
-
-            latest_detected = top.score > CONFIDENCE_THRESHOLD;
-            if (latest_detected) {
-                latest_target_x = inference_center[0] - HALF_YOLO_W + top.cx;
-                latest_target_y = inference_center[1] - HALF_YOLO_H + top.cy;
+                try model.startInfer(rgb_cropped, Yolo.WIDTH, Yolo.HEIGHT);
+                inference_running = true;
             }
         }
 
@@ -172,8 +186,8 @@ pub fn main(init: std.process.Init) !void {
             const box_y = top.cy - (box_h / 2.0);
 
             const rect = rl.Rectangle{
-                .x = box_x + inference_center[0] - HALF_YOLO_W,
-                .y = box_y + inference_center[1] - HALF_YOLO_H,
+                .x = box_x + result_center[0] - HALF_YOLO_W,
+                .y = box_y + result_center[1] - HALF_YOLO_H,
                 .width = box_w,
                 .height = box_h,
             };
