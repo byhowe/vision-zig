@@ -51,8 +51,8 @@ input_shape: [4]i64,
 input_tensor: ?*ort.OrtValue = null,
 output_tensor: ?*ort.OrtValue = null,
 
-input_name: [*]const u8,
-output_name: [*]const u8,
+input_name: [*]u8,
+output_name: [*]u8,
 
 state: std.atomic.Value(State) = std.atomic.Value(State).init(.idle),
 run_status: ?*ort.OrtStatus = null,
@@ -147,8 +147,8 @@ pub fn deinit(self: *Self) void {
     if (self.input_tensor) |t| self.api.*.ReleaseValue.?(t);
     if (self.output_tensor) |t| self.api.*.ReleaseValue.?(t);
 
-    _ = self.api.*.AllocatorFree.?(self.allocator, self.input_name);
-    _ = self.api.*.AllocatorFree.?(self.allocator, self.output_name);
+    _ = self.api.*.AllocatorFree.?(self.allocator, @ptrCast(self.input_name));
+    _ = self.api.*.AllocatorFree.?(self.allocator, @ptrCast(self.output_name));
 
     self.api.*.ReleaseMemoryInfo.?(self.memory_info);
     self.api.*.ReleaseSession.?(self.session);

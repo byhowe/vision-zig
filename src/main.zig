@@ -31,6 +31,7 @@ pub fn main(init: std.process.Init) !void {
     // ONNX
 
     var model = try Yolo.init(arena);
+    defer model.deinit();
 
     // RAYLIB
 
