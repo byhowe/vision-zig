@@ -13,8 +13,8 @@ const DEVICE = "/dev/video0";
 
 const CONFIDENCE_THRESHOLD = 0.35;
 
-const YOLO_W_F32: f32 = @floatFromInt(Yolo.WIDTH);
-const YOLO_H_F32: f32 = @floatFromInt(Yolo.HEIGHT);
+const YOLO_W_F32: f32 = @floatFromInt(protocol.CROP_WIDTH);
+const YOLO_H_F32: f32 = @floatFromInt(protocol.CROP_HEIGHT);
 const HALF_YOLO_W: f32 = YOLO_W_F32 / 2.0;
 const HALF_YOLO_H: f32 = YOLO_H_F32 / 2.0;
 
@@ -125,8 +125,8 @@ pub fn main(init: std.process.Init) !void {
         rl.drawRectangleLines(
             @intFromFloat(crop_center[0] - HALF_YOLO_W),
             @intFromFloat(crop_center[1] - HALF_YOLO_H),
-            Yolo.WIDTH,
-            Yolo.HEIGHT,
+            protocol.CROP_WIDTH,
+            protocol.CROP_HEIGHT,
             rl.Color.red,
         );
 
@@ -252,7 +252,7 @@ const Detector = struct {
     target_center: [2]f32 = .{ HALF_W, HALF_H },
 
     pub fn init(arena: std.mem.Allocator) !Self {
-        const crop_buffer = try arena.alloc(u8, Yolo.WIDTH * Yolo.HEIGHT * 3);
+        const crop_buffer = try arena.alloc(u8, protocol.CROP_WIDTH * protocol.CROP_HEIGHT * 3);
         @memset(crop_buffer, 0); // Initialize to black
 
         return .{
@@ -273,13 +273,13 @@ const Detector = struct {
             protocol.FRAME_WIDTH,
             protocol.FRAME_HEIGHT,
             self.crop_buffer,
-            Yolo.WIDTH,
-            Yolo.HEIGHT,
+            protocol.CROP_WIDTH,
+            protocol.CROP_HEIGHT,
             @intFromFloat(crop_center[0] - HALF_YOLO_W),
             @intFromFloat(crop_center[1] - HALF_YOLO_H),
         );
 
-        try self.model.startInfer(self.crop_buffer, Yolo.WIDTH, Yolo.HEIGHT);
+        try self.model.startInfer(self.crop_buffer, protocol.CROP_WIDTH, protocol.CROP_HEIGHT);
         self.inference_running = true;
         self.current_center = crop_center;
     }
