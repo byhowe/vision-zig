@@ -34,8 +34,15 @@ env: *ort.OrtEnv,
 session: *ort.OrtSession,
 allocator: *ort.OrtAllocator,
 memory_info: *ort.OrtMemoryInfo,
+
 input_tensor_data: []f32,
 input_shape: [4]i64,
+
+input_tensor: ?*ort.OrtValue = null,
+output_tensor: ?*ort.OrtValue = null,
+
+input_name: [*]const u8,
+output_name: [*]const u8,
 
 pub fn init(arena: std.mem.Allocator) !Self {
     const api_base = ort.OrtGetApiBase().?;
@@ -75,6 +82,11 @@ pub fn init(arena: std.mem.Allocator) !Self {
     var allocator: ?*ort.OrtAllocator = null;
     try checkStatus(api, api.*.GetAllocatorWithDefaultOptions.?(&allocator));
 
+    var input_name: ?[*]u8 = null;
+    var output_name: ?[*]u8 = null;
+    try checkStatus(api, api.*.SessionGetInputName.?(session, 0, allocator, &input_name));
+    try checkStatus(api, api.*.SessionGetOutputName.?(session, 0, allocator, &output_name));
+
     // setup memory and buffers
 
     var memory_info: ?*ort.OrtMemoryInfo = null;
@@ -90,18 +102,41 @@ pub fn init(arena: std.mem.Allocator) !Self {
     const input_tensor_data = try arena.alloc(f32, input_tensor_len);
     const input_shape = [_]i64{ 1, 3, HEIGHT, WIDTH };
 
+    var input_tensor: ?*ort.OrtValue = null;
+    try checkStatus(api, api.*.CreateTensorWithDataAsOrtValue.?(
+        memory_info,
+        @ptrCast(input_tensor_data.ptr),
+        input_tensor_data.len * @sizeOf(f32),
+        @ptrCast(&input_shape[0]),
+        input_shape.len,
+        ort.ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+        &input_tensor,
+    ));
+
     return .{
         .api = api.?,
         .env = env.?,
         .session = session.?,
         .allocator = allocator.?,
         .memory_info = memory_info.?,
+
         .input_tensor_data = input_tensor_data,
         .input_shape = input_shape,
+
+        .input_tensor = input_tensor.?,
+
+        .input_name = input_name.?,
+        .output_name = output_name.?,
     };
 }
 
 pub fn deinit(self: *Self) void {
+    if (self.input_tensor) |t| self.api.*.ReleaseValue.?(t);
+    if (self.output_tensor) |t| self.api.*.ReleaseValue.?(t);
+
+    _ = self.api.*.AllocatorFree.?(self.allocator, self.input_name);
+    _ = self.api.*.AllocatorFree.?(self.allocator, self.output_name);
+
     self.api.*.ReleaseMemoryInfo.?(self.memory_info);
     self.api.*.ReleaseSession.?(self.session);
     self.api.*.ReleaseEnv.?(self.env);
@@ -117,41 +152,23 @@ pub fn infer(self: *Self, rgb_frame: []const u8, src_w: usize, src_h: usize) !Pr
         HEIGHT,
     );
 
-    // FIXME: the documentation says we need to free these with the allocator. how do we do that?
-    var input_name: ?[*]u8 = null;
-    try checkStatus(self.api, self.api.*.SessionGetInputName.?(self.session, 0, self.allocator, &input_name));
-
-    var output_name: ?[*]u8 = null;
-    try checkStatus(self.api, self.api.*.SessionGetOutputName.?(self.session, 0, self.allocator, &output_name));
-
-    // TODO: do we need to create this tensor every time? can we do it once outside the loop and fill the data every frame? experiment...
-    var input_tensor: ?*ort.OrtValue = null;
-    try checkStatus(self.api, self.api.*.CreateTensorWithDataAsOrtValue.?(
-        self.memory_info,
-        @ptrCast(self.input_tensor_data.ptr),
-        self.input_tensor_data.len * @sizeOf(f32),
-        @ptrCast(&self.input_shape[0]),
-        self.input_shape.len,
-        ort.ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-        &input_tensor,
-    ));
-    defer self.api.*.ReleaseValue.?(input_tensor);
-
-    var output_tensor: ?*ort.OrtValue = null;
     try checkStatus(self.api, self.api.*.Run.?(
         self.session,
         null, // run_options
-        &input_name,
-        &input_tensor,
+        &self.input_name,
+        &self.input_tensor,
         1,
-        &output_name,
+        &self.output_name,
         1,
-        &output_tensor,
+        &self.output_tensor,
     ));
-    defer self.api.*.ReleaseValue.?(output_tensor);
+    defer {
+        self.api.*.ReleaseValue.?(self.output_tensor);
+        self.output_tensor = null;
+    }
 
     var out_ptr: [*c]f32 = null;
-    try checkStatus(self.api, self.api.*.GetTensorMutableData.?(output_tensor, @ptrCast(&out_ptr)));
+    try checkStatus(self.api, self.api.*.GetTensorMutableData.?(self.output_tensor, @ptrCast(&out_ptr)));
 
     const top = getTopPrediction(out_ptr, NUM_ANCHORS);
     return top;
