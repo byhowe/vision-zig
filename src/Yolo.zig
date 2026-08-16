@@ -1,6 +1,8 @@
 const std = @import("std");
 const ort = @import("ort");
 
+const protocol = @import("protocol.zig");
+
 const model_data: []const u8 = @embedFile("yolov8m.onnx");
 // in 0: name='images', shape={ 1, 3, 640, 640 }
 // out 0: name='output0', shape={ 1, 84, 8400 }
@@ -21,9 +23,7 @@ pub const model_labels = block: {
     break :block arr;
 };
 
-pub const WIDTH = 640;
-pub const HEIGHT = 640;
-pub const NUM_ANCHORS = if (WIDTH == 320) 2100 else 8400;
+pub const NUM_ANCHORS = if (protocol.CROP_WIDTH == 320) 2100 else 8400;
 
 const InferError = error{
     AlreadyRunning,
@@ -111,9 +111,9 @@ pub fn init(arena: std.mem.Allocator) !Self {
     errdefer api.*.ReleaseMemoryInfo.?(memory_info);
 
     // arena allocate buffer for the input tensor. we already know the size from the previous debug prints.
-    const input_tensor_len = 1 * 3 * HEIGHT * WIDTH;
+    const input_tensor_len = 1 * 3 * protocol.CROP_HEIGHT * protocol.CROP_WIDTH;
     const input_tensor_data = try arena.alloc(f32, input_tensor_len);
-    const input_shape = [_]i64{ 1, 3, HEIGHT, WIDTH };
+    const input_shape = [_]i64{ 1, 3, protocol.CROP_HEIGHT, protocol.CROP_WIDTH };
 
     var input_tensor: ?*ort.OrtValue = null;
     try checkStatus(api, api.*.CreateTensorWithDataAsOrtValue.?(
@@ -164,8 +164,8 @@ pub fn startInfer(self: *Self, rgb_frame: []const u8, src_w: usize, src_h: usize
         self.input_tensor_data,
         src_w,
         src_h,
-        WIDTH,
-        HEIGHT,
+        protocol.CROP_WIDTH,
+        protocol.CROP_HEIGHT,
     );
 
     self.run_status = null;

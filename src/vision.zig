@@ -4,13 +4,12 @@ const vl = @import("vl");
 const rl = @import("raylib");
 
 const pixels = @import("pixels.zig");
+const protocol = @import("protocol.zig");
 
 const Video = @import("Video.zig");
 const Yolo = @import("Yolo.zig");
 
 const DEVICE = "/dev/video0";
-const WIDTH = 1280;
-const HEIGHT = 720;
 
 const CONFIDENCE_THRESHOLD = 0.35;
 
@@ -19,8 +18,8 @@ const YOLO_H_F32: f32 = @floatFromInt(Yolo.HEIGHT);
 const HALF_YOLO_W: f32 = YOLO_W_F32 / 2.0;
 const HALF_YOLO_H: f32 = YOLO_H_F32 / 2.0;
 
-const W_F32: f32 = @floatFromInt(WIDTH);
-const H_F32: f32 = @floatFromInt(HEIGHT);
+const W_F32: f32 = @floatFromInt(protocol.FRAME_WIDTH);
+const H_F32: f32 = @floatFromInt(protocol.FRAME_HEIGHT);
 const HALF_W: f32 = W_F32 / 2.0;
 const HALF_H: f32 = H_F32 / 2.0;
 
@@ -39,19 +38,19 @@ pub fn main(init: std.process.Init) !void {
     rl.setTraceLogLevel(.warning);
     std.debug.print("raylib version = {s}\n", .{rl.RAYLIB_VERSION});
 
-    rl.initWindow(WIDTH, HEIGHT, "YOLO");
+    rl.initWindow(protocol.FRAME_WIDTH, protocol.FRAME_HEIGHT, "YOLO");
     rl.setTargetFPS(120);
     defer rl.closeWindow();
 
     // texture_data holds the image data we show on screen.
-    const texture_size = WIDTH * HEIGHT * 3;
+    const texture_size = protocol.FRAME_WIDTH * protocol.FRAME_HEIGHT * 3;
     const texture_data = try arena.alloc(u8, texture_size);
     @memset(texture_data, 0); // Initialize to black
 
     const texture_image = rl.Image{
         .data = @ptrCast(texture_data.ptr),
-        .width = WIDTH,
-        .height = HEIGHT,
+        .width = protocol.FRAME_WIDTH,
+        .height = protocol.FRAME_HEIGHT,
         .mipmaps = 1,
         .format = .uncompressed_r8g8b8,
     };
@@ -62,7 +61,7 @@ pub fn main(init: std.process.Init) !void {
     var video = try Video.init(DEVICE);
     defer video.deinit();
 
-    try video.setFormat(WIDTH, HEIGHT);
+    try video.setFormat(protocol.FRAME_WIDTH, protocol.FRAME_HEIGHT);
     _ = try video.setFramerate(30); // we don't really care about the actual framerate
     try video.requestBuffers(arena);
     try video.mapBuffers();
@@ -96,7 +95,7 @@ pub fn main(init: std.process.Init) !void {
 
         if ((pfds[0].revents & std.posix.POLL.IN) != 0) {
             const jpeg_buffer = try video.dequeueBuffer();
-            try pixels.jpegToRgb(jpeg_buffer, texture_data, WIDTH, HEIGHT);
+            try pixels.jpegToRgb(jpeg_buffer, texture_data, protocol.FRAME_WIDTH, protocol.FRAME_HEIGHT);
             try video.queueBuffer(jpeg_buffer); // return to kernel immediately, probably not a huge deal
 
             // TODO: we may have a setting where we use yuyv or mjpeg. so keep this around for now.
@@ -161,8 +160,8 @@ const AimTracker = struct {
         io.random(std.mem.asBytes(&seed));
 
         return .{
-            .ema_x = @as(f32, @floatFromInt(WIDTH)) / 2.0,
-            .ema_y = @as(f32, @floatFromInt(HEIGHT)) / 2.0,
+            .ema_x = @as(f32, @floatFromInt(protocol.FRAME_WIDTH)) / 2.0,
+            .ema_y = @as(f32, @floatFromInt(protocol.FRAME_HEIGHT)) / 2.0,
 
             .search_target_x = HALF_W,
             .search_target_y = HALF_H,
@@ -271,8 +270,8 @@ const Detector = struct {
 
         try pixels.cropRgbFrame(
             frame,
-            WIDTH,
-            HEIGHT,
+            protocol.FRAME_WIDTH,
+            protocol.FRAME_HEIGHT,
             self.crop_buffer,
             Yolo.WIDTH,
             Yolo.HEIGHT,
