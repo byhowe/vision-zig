@@ -56,6 +56,16 @@ pub fn main(init: std.process.Init) !void {
     };
     const texture = try rl.loadTextureFromImage(texture_image);
 
+    // Connect to server
+
+    const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", protocol.VIDEO_PORT);
+    const stream = try addr.connect(io, .{.mode = .stream, .protocol = .tcp,});
+    defer stream.close(io);
+
+    var write_buf: [4096]u8 = undefined;
+    var cw = stream.writer(io, &write_buf);
+    const w = &cw.interface;
+
     // V4L2
 
     var video = try Video.init(DEVICE);
@@ -96,6 +106,15 @@ pub fn main(init: std.process.Init) !void {
         if ((pfds[0].revents & std.posix.POLL.IN) != 0) {
             const jpeg_buffer = try video.dequeueBuffer();
             try pixels.jpegToRgb(jpeg_buffer, texture_data, protocol.FRAME_WIDTH, protocol.FRAME_HEIGHT);
+
+            // before dequeue, also send it over the socket
+            const header: protocol.FrameHeader = .{
+                .len = jpeg_buffer.len,
+                .timestamp_ns = now,
+            };
+            try w.writeAll(std.mem.asBytes(&header));
+            try w.writeAll(jpeg_buffer);
+
             try video.queueBuffer(jpeg_buffer); // return to kernel immediately, probably not a huge deal
 
             // TODO: we may have a setting where we use yuyv or mjpeg. so keep this around for now.
