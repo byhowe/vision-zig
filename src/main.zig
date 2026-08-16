@@ -282,6 +282,7 @@ const Detector = struct {
 
         try self.model.startInfer(self.crop_buffer, Yolo.WIDTH, Yolo.HEIGHT);
         self.inference_running = true;
+        self.current_center = crop_center;
     }
 
     pub fn collectResult(self: *Self) !bool {
