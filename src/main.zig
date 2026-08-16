@@ -77,11 +77,11 @@ pub fn main(init: std.process.Init) !void {
     }};
 
     // track the actual frame time
-    var last_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
-    var real_fps: f32 = 0.0;
+    var fps = FpsTracker.init(io);
+
     var top: Yolo.Prediction = .{};
 
-    var last_ema_timestamp = last_frame_timestamp;
+    var last_ema_timestamp = fps.last_timestamp;
     var latest_detected: bool = false;
     var latest_target_x: f32 = HALF_W;
     var latest_target_y: f32 = HALF_H;
@@ -131,10 +131,7 @@ pub fn main(init: std.process.Init) !void {
             rl.updateTexture(texture, @ptrCast(texture_data.ptr));
 
             // calculate real fps obtained by the frame arrival times
-            const new_frame_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
-            const time_elapsed = new_frame_timestamp - last_frame_timestamp;
-            last_frame_timestamp = new_frame_timestamp;
-            real_fps = @as(f32, @floatFromInt(std.time.ns_per_s)) / @as(f32, @floatFromInt(time_elapsed));
+            fps.tick(io);
             // NOTE: Interesting. the fps is much more erradic when the webcam privacy is on.
             // It fluctuates between 15 fps and 30 fps.
 
@@ -167,7 +164,7 @@ pub fn main(init: std.process.Init) !void {
         rl.drawTexture(texture, 0, 0, rl.Color.white);
 
         var fps_text_buffer: [64]u8 = undefined;
-        const fps_text = std.fmt.bufPrintZ(&fps_text_buffer, "FPS: {d:.2}", .{real_fps}) catch unreachable;
+        const fps_text = std.fmt.bufPrintZ(&fps_text_buffer, "FPS: {d:.2}", .{fps.instant_fps}) catch unreachable;
         rl.drawText(fps_text, 10, 10, 20, rl.Color.lime);
 
         // draw rectangle of where the model is seeing.
@@ -294,5 +291,23 @@ const EMA = struct {
             self.ema_x = (drift_alpha * self.search_target_x) + ((1.0 - drift_alpha) * self.ema_x);
             self.ema_y = (drift_alpha * self.search_target_y) + ((1.0 - drift_alpha) * self.ema_y);
         }
+    }
+};
+
+const FpsTracker = struct {
+    const Self = @This();
+
+    instant_fps: f32 = 0.0,
+    last_timestamp: i96,
+
+    pub fn init(io: std.Io) Self {
+        return .{ .last_timestamp = std.Io.Clock.awake.now(io).nanoseconds };
+    }
+
+    pub fn tick(self: *Self, io: std.Io) void {
+        const new_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
+        const dt = @as(f32, @floatFromInt(new_timestamp - self.last_timestamp)) / @as(f32, @floatFromInt(std.time.ns_per_s));
+        self.last_timestamp = new_timestamp;
+        self.instant_fps = 1.0 / dt;
     }
 };
