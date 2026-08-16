@@ -30,8 +30,8 @@ pub fn main(init: std.process.Init) !void {
 
     // ONNX
 
-    var model = try Yolo.init(arena);
-    defer model.deinit();
+    var detector = try Detector.init(arena);
+    defer detector.deinit();
 
     // RAYLIB
 
@@ -79,45 +79,18 @@ pub fn main(init: std.process.Init) !void {
     // track the actual frame time
     var fps = FpsTracker.init(io);
 
-    var top: Yolo.Prediction = .{};
-
     var last_ema_timestamp = fps.last_timestamp;
-    var latest_detected: bool = false;
-    var latest_target_x: f32 = HALF_W;
-    var latest_target_y: f32 = HALF_H;
 
-    var inference_running = false;
-    var result_center: [2]f32 = .{ HALF_W, HALF_H };
-    var pending_center: [2]f32 = .{ HALF_W, HALF_H };
-
-    // TODO: optimization: instead of filling a cropped version every frame, feed the infer
-    // function with the uncropped version and let it fill its internal f32 buffer with the
-    // cropped version directly. this is currently just an intermediary buffer.
-    const rgb_cropped = try arena.alloc(u8, Yolo.WIDTH * Yolo.HEIGHT * 3);
-    @memset(rgb_cropped, 0); // Initialize to black
-
-    var ema = EMA.init(io);
-    var center: [2]f32 = .{ HALF_W, HALF_H };
+    var aim = AimTracker.init(io);
+    var crop_center: [2]f32 = .{ HALF_W, HALF_H };
 
     while (!rl.windowShouldClose()) {
-        const current_timestamp = std.Io.Clock.awake.now(io).nanoseconds;
-        const dt_ns = current_timestamp - last_ema_timestamp;
-        last_ema_timestamp = current_timestamp;
+        const now = std.Io.Clock.awake.now(io).nanoseconds;
+        const dt_ns = now - last_ema_timestamp;
+        last_ema_timestamp = now;
         const dt: f32 = @as(f32, @floatFromInt(dt_ns)) / @as(f32, @floatFromInt(std.time.ns_per_s));
 
-        if (inference_running) {
-            if (try model.pollResult()) |pred| {
-                top = pred;
-                result_center = pending_center;
-                inference_running = false;
-
-                latest_detected = top.score > CONFIDENCE_THRESHOLD;
-                if (latest_detected) {
-                    latest_target_x = result_center[0] - HALF_YOLO_W + top.cx;
-                    latest_target_y = result_center[1] - HALF_YOLO_H + top.cy;
-                }
-            }
-        }
+        _ = try detector.collectResult();
 
         _ = try std.posix.poll(&pfds, 0);
 
@@ -135,27 +108,11 @@ pub fn main(init: std.process.Init) !void {
             // NOTE: Interesting. the fps is much more erradic when the webcam privacy is on.
             // It fluctuates between 15 fps and 30 fps.
 
-            if (!inference_running) {
-                pending_center = center;
-
-                try pixels.cropRgbFrame(
-                    texture_data,
-                    WIDTH,
-                    HEIGHT,
-                    rgb_cropped,
-                    Yolo.WIDTH,
-                    Yolo.HEIGHT,
-                    @intFromFloat(pending_center[0] - HALF_YOLO_W),
-                    @intFromFloat(pending_center[1] - HALF_YOLO_H),
-                );
-
-                try model.startInfer(rgb_cropped, Yolo.WIDTH, Yolo.HEIGHT);
-                inference_running = true;
-            }
+            try detector.submitFrame(texture_data, crop_center);
         }
 
-        ema.update(dt, latest_detected, latest_target_x, latest_target_y);
-        center = ema.center();
+        aim.update(dt, detector.target_detected, detector.target_center);
+        crop_center = aim.center();
 
         rl.beginDrawing();
         defer rl.endDrawing();
@@ -167,20 +124,20 @@ pub fn main(init: std.process.Init) !void {
 
         // draw rectangle of where the model is seeing.
         rl.drawRectangleLines(
-            @intFromFloat(center[0] - HALF_YOLO_W),
-            @intFromFloat(center[1] - HALF_YOLO_H),
+            @intFromFloat(crop_center[0] - HALF_YOLO_W),
+            @intFromFloat(crop_center[1] - HALF_YOLO_H),
             Yolo.WIDTH,
             Yolo.HEIGHT,
             rl.Color.red,
         );
 
-        if (top.score > CONFIDENCE_THRESHOLD) {
-            drawBoundingBox(top, result_center);
+        if (detector.target_detected) {
+            drawBoundingBox(detector.last_pred, detector.last_pred_center);
         }
     }
 }
 
-const EMA = struct {
+const AimTracker = struct {
     const Self = @This();
 
     ema_x: f32,
@@ -206,8 +163,10 @@ const EMA = struct {
         return .{
             .ema_x = @as(f32, @floatFromInt(WIDTH)) / 2.0,
             .ema_y = @as(f32, @floatFromInt(HEIGHT)) / 2.0,
+
             .search_target_x = HALF_W,
             .search_target_y = HALF_H,
+
             .sigma = sigma_max,
             .prng = .init(seed),
         };
@@ -221,11 +180,11 @@ const EMA = struct {
         };
     }
 
-    pub fn update(self: *Self, dt: f32, detected: bool, target_x: f32, target_y: f32) void {
+    pub fn update(self: *Self, dt: f32, detected: bool, target: [2]f32) void {
         if (detected) {
             const alpha = 1.0 - std.math.exp(-dt * track_speed);
-            self.ema_x = (alpha * target_x) + ((1.0 - alpha) * self.ema_x);
-            self.ema_y = (alpha * target_y) + ((1.0 - alpha) * self.ema_y);
+            self.ema_x = (alpha * target[0]) + ((1.0 - alpha) * self.ema_x);
+            self.ema_y = (alpha * target[1]) + ((1.0 - alpha) * self.ema_y);
 
             self.sigma = (alpha * sigma_min) + ((1.0 - alpha) * self.sigma);
 
@@ -270,6 +229,78 @@ const FpsTracker = struct {
         const dt = @as(f32, @floatFromInt(new_timestamp - self.last_timestamp)) / @as(f32, @floatFromInt(std.time.ns_per_s));
         self.last_timestamp = new_timestamp;
         self.instant_fps = 1.0 / dt;
+    }
+};
+
+const Detector = struct {
+    const Self = @This();
+
+    model: Yolo,
+
+    // temporary buffer for the cropped image that feeds into the model.
+    // TODO: optimization: instead of filling a cropped version every frame, feed the infer
+    // function with the uncropped version and let it fill its internal f32 buffer with the
+    // cropped version directly. this is currently just an intermediary buffer.
+    crop_buffer: []u8,
+
+    inference_running: bool = false, // have we submitted a frame?
+    current_center: [2]f32 = .{ HALF_W, HALF_H }, //crop center of the most-recently submitted frame
+
+    last_pred: Yolo.Prediction = .{}, // results of the last successful inference
+    last_pred_center: [2]f32 = .{ HALF_W, HALF_H }, // crop center of the last successful inference
+
+    target_detected: bool = false, // is there a target in the last prediction?
+    target_center: [2]f32 = .{ HALF_W, HALF_H },
+
+    pub fn init(arena: std.mem.Allocator) !Self {
+        const crop_buffer = try arena.alloc(u8, Yolo.WIDTH * Yolo.HEIGHT * 3);
+        @memset(crop_buffer, 0); // Initialize to black
+
+        return .{
+            .model = try Yolo.init(arena),
+            .crop_buffer = crop_buffer,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.model.deinit();
+    }
+
+    pub fn submitFrame(self: *Self, frame: []const u8, crop_center: [2]f32) !void {
+        if (self.inference_running) return;
+
+        try pixels.cropRgbFrame(
+            frame,
+            WIDTH,
+            HEIGHT,
+            self.crop_buffer,
+            Yolo.WIDTH,
+            Yolo.HEIGHT,
+            @intFromFloat(crop_center[0] - HALF_YOLO_W),
+            @intFromFloat(crop_center[1] - HALF_YOLO_H),
+        );
+
+        try self.model.startInfer(self.crop_buffer, Yolo.WIDTH, Yolo.HEIGHT);
+        self.inference_running = true;
+    }
+
+    pub fn collectResult(self: *Self) !bool {
+        if (!self.inference_running) return false;
+        const pred = (try self.model.pollResult()) orelse return false;
+
+        self.last_pred = pred;
+        self.last_pred_center = self.current_center;
+        self.inference_running = false;
+
+        self.target_detected = pred.score > CONFIDENCE_THRESHOLD;
+        if (self.target_detected) {
+            self.target_center = .{
+                self.last_pred_center[0] - HALF_YOLO_W + pred.cx,
+                self.last_pred_center[1] - HALF_YOLO_H + pred.cy,
+            };
+        }
+
+        return true;
     }
 };
 
