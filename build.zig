@@ -4,15 +4,26 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+    const exe_vision_mod = b.createModule(.{
+        .root_source_file = b.path("src/vision.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    const exe = b.addExecutable(.{
-        .name = "vision_zig",
-        .root_module = exe_mod,
+    const exe_vision = b.addExecutable(.{
+        .name = "vision",
+        .root_module = exe_vision_mod,
+    });
+
+    const exe_client_mod = b.createModule(.{
+        .root_source_file = b.path("src/client.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const exe_client = b.addExecutable(.{
+        .name = "client",
+        .root_module = exe_client_mod,
     });
 
     const raylib_dep = b.dependency("raylib_zig", .{
@@ -48,11 +59,15 @@ pub fn build(b: *std.Build) void {
         .flags = &.{"-O3"},
     });
 
-    exe.root_module.linkLibrary(raylib_artifact);
-    exe.root_module.addImport("raylib", raylib);
-    exe.root_module.addImport("ort", ort.createModule());
-    exe.root_module.addImport("vl", vl.createModule());
-    exe.root_module.addImport("stb", stb_mod);
+    exe_vision.root_module.linkLibrary(raylib_artifact);
+    exe_vision.root_module.addImport("raylib", raylib);
+    exe_vision.root_module.addImport("ort", ort.createModule());
+    exe_vision.root_module.addImport("vl", vl.createModule());
+    exe_vision.root_module.addImport("stb", stb_mod);
 
-    b.installArtifact(exe);
+    exe_client.root_module.addImport("raylib", raylib);
+    exe_client.root_module.addImport("stb", stb_mod);
+
+    b.installArtifact(exe_vision);
+    b.installArtifact(exe_client);
 }
