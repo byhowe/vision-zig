@@ -15,15 +15,15 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_vision_mod,
     });
 
-    const exe_client_mod = b.createModule(.{
-        .root_source_file = b.path("src/client.zig"),
+    const exe_server_mod = b.createModule(.{
+        .root_source_file = b.path("src/server.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    const exe_client = b.addExecutable(.{
-        .name = "client",
-        .root_module = exe_client_mod,
+    const exe_server = b.addExecutable(.{
+        .name = "server",
+        .root_module = exe_server_mod,
     });
 
     const raylib_dep = b.dependency("raylib_zig", .{
@@ -65,9 +65,9 @@ pub fn build(b: *std.Build) void {
     exe_vision.root_module.addImport("vl", vl.createModule());
     exe_vision.root_module.addImport("stb", stb_mod);
 
-    exe_client.root_module.addImport("raylib", raylib);
-    exe_client.root_module.addImport("stb", stb_mod);
+    exe_server.root_module.addImport("raylib", raylib);
+    exe_server.root_module.addImport("stb", stb_mod);
 
     b.installArtifact(exe_vision);
-    b.installArtifact(exe_client);
+    b.installArtifact(exe_server);
 }
