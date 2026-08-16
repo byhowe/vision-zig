@@ -23,9 +23,7 @@ pub const model_labels = block: {
 
 pub const WIDTH = 320;
 pub const HEIGHT = 320;
-pub const NUM_ANCHORS = 2100; // for imgsz=320
-// pub const NUM_ANCHORS = 8400; // for imgsz=640
-// TODO: obtain NUM_ANCHORS dynamically.
+pub const NUM_ANCHORS = if (WIDTH == 320) 2100 else 8400;
 
 const Self = @This();
 
