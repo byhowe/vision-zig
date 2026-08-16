@@ -1,7 +1,7 @@
 const std = @import("std");
 const ort = @import("ort");
 
-const model_data: []const u8 = @embedFile("yolov8n.onnx");
+const model_data: []const u8 = @embedFile("yolov8m.onnx");
 // in 0: name='images', shape={ 1, 3, 640, 640 }
 // out 0: name='output0', shape={ 1, 84, 8400 }
 
@@ -21,8 +21,8 @@ pub const model_labels = block: {
     break :block arr;
 };
 
-pub const WIDTH = 320;
-pub const HEIGHT = 320;
+pub const WIDTH = 640;
+pub const HEIGHT = 640;
 pub const NUM_ANCHORS = if (WIDTH == 320) 2100 else 8400;
 
 const InferError = error{
@@ -75,11 +75,11 @@ pub fn init(arena: std.mem.Allocator) !Self {
     try checkStatus(api, api.*.SetIntraOpNumThreads.?(session_options, 4));
 
     // enable cuda so we can still use the computer
-    var cuda_options: ?*ort.OrtCUDAProviderOptionsV2 = null;
-    try checkStatus(api, api.*.CreateCUDAProviderOptions.?(&cuda_options));
-    defer api.*.ReleaseCUDAProviderOptions.?(cuda_options);
+    // var cuda_options: ?*ort.OrtCUDAProviderOptionsV2 = null;
+    // try checkStatus(api, api.*.CreateCUDAProviderOptions.?(&cuda_options));
+    // defer api.*.ReleaseCUDAProviderOptions.?(cuda_options);
 
-    try checkStatus(api, api.*.SessionOptionsAppendExecutionProvider_CUDA_V2.?(session_options, cuda_options));
+    // try checkStatus(api, api.*.SessionOptionsAppendExecutionProvider_CUDA_V2.?(session_options, cuda_options));
 
     // create session from the model data
     var session: ?*ort.OrtSession = null;
@@ -169,6 +169,8 @@ pub fn startInfer(self: *Self, rgb_frame: []const u8, src_w: usize, src_h: usize
     );
 
     self.run_status = null;
+
+    if (self.output_tensor != null) return error.OutputTensorNotNull;
 
     errdefer self.state.store(.idle, .release);
     try checkStatus(self.api, self.api.*.RunAsync.?(
